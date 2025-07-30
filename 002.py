@@ -13,11 +13,13 @@ ip = '222.231.24.5'
 ttsLock = threading.Lock()
 tts_request = None
 tts_thread_running = False
+tts_block_until = 0
 
 def tts_worker():
-    global tts_request, tts_thread_running
+    global tts_request, tts_thread_running, tts_block_until
     while True:
-        if tts_request is not None:
+        now = time.time()
+        if tts_request is not None and now > tts_block_until:
             text = tts_request
             tts_request = None
             tts_path = f"tts_cache_{hash(text)}.mp3"
@@ -30,6 +32,7 @@ def tts_worker():
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
+            tts_block_until = time.time() + 2  # 2초 블록
         else:
             time.sleep(0.05)
 

@@ -12,7 +12,12 @@ from gtts import gTTS
 ip = '222.231.24.5'
 ttsLock = threading.Lock()
 
-def _speak_tts(text):
+tts_playing = False
+last_tts_request = None
+
+def speak_tts(text):
+    global tts_playing, last_tts_request
+    tts_playing = True
     tts_path = f"tts_cache_{hash(text)}.mp3"
     if not os.path.exists(tts_path):
         tts = gTTS(text=text, lang='ko')
@@ -23,9 +28,19 @@ def _speak_tts(text):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
+    tts_playing = False
+    # TTS 끝난 후, 마지막 요청이 있으면 바로 실행
+    if last_tts_request:
+        next_text = last_tts_request
+        last_tts_request = None
+        speak_tts_async(next_text)
 
-def _speakTtsAsync(text):
-    threading.Thread(target=_speak_tts, args=(text,), daemon=True).start()
+def speak_tts_async(text):
+    global tts_playing, last_tts_request
+    if tts_playing:
+        last_tts_request = text  # 마지막 요청만 저장
+    else:
+        threading.Thread(target=speak_tts, args=(text,), daemon=True).start()
 
 class CameraThread(threading.Thread):
     def __init__(self, device_path):
@@ -108,7 +123,7 @@ async def send_frames(cam, cam_idx, total_cams):
                 if ttsMsg:
                     if ttsMsg != lastTtsMsg or (now - lastTtsTime) > 2:
                         print(f"[{windowName}]", ttsMsg)
-                        _speakTtsAsync(ttsMsg)
+                        speak_tts_async(ttsMsg)
                         lastTtsMsg = ttsMsg
                         lastTtsTime = now
 

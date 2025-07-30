@@ -36,14 +36,14 @@ def tts_worker():
         else:
             time.sleep(0.05)
 
-def start_tts_worker():
+def _startTtsWorker():
     global ttsThreadRunning
     if not ttsThreadRunning:
         t = threading.Thread(target=tts_worker, daemon=True)
         t.start()
         ttsThreadRunning = True
 
-def speak_tts_async(text):
+def _speakTtsAsync(text):
     global ttsRequest
     ttsRequest = text
 
@@ -57,27 +57,23 @@ class CameraThread(threading.Thread):
         self.running = True
 
         if not self.cap.isOpened():
-            print(f"[ERROR] Failed to open {self.device_path}")
             self.running = False
             return
 
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
-        self.cap.set(cv2.CAP_PROP_FPS, 15)
-        print(f"[INFO] Opened {self.device_path}")
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
 
     def run(self):
         while self.running:
             self.ret, self.frame = self.cap.read()
             if not self.ret:
-                print(f"[WARN] Failed to read frame from {self.device_path}")
                 time.sleep(0.1)
 
     def stop(self):
         self.running = False
         if self.cap.isOpened():
             self.cap.release()
-        print(f"[INFO] Released {self.device_path}")
 
 def _findVideoDevices():
     devices = []
@@ -128,7 +124,7 @@ async def _sendFrames(cam, cam_idx, total_cams):
                 if ttsMsg:
                     if ttsMsg != lastTtsMsg or (now - lastTtsTime) > 2:
                         print(f"[{windowName}]", ttsMsg)
-                        speak_tts_async(ttsMsg)
+                        _speakTtsAsync(ttsMsg)
                         lastTtsMsg = ttsMsg
                         lastTtsTime = now
 
@@ -181,5 +177,5 @@ async def main():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    start_tts_worker()
+    _startTtsWorker()
     asyncio.run(main())

@@ -99,11 +99,9 @@ def _askGptAboutBbox(label, box, croppedImg):
             max_tokens=10,
         )
         elapsed = time.time() - start_time
-        print(f"[DEBUG] GPT Vision API 추론 시간: {elapsed:.2f}초")
         answer = response.choices[0].message.content
         return answer
     except Exception as e:
-        print("[ERROR] GPT Vision API 호출 실패:", e)
         return "비정상"
     finally:
         gpt_lock.release()
@@ -175,7 +173,6 @@ def _getObstacleZone(detections, frameWidth):
     return zones
 
 async def _handleClient(websocket):
-    print("[INFO] Client connected")
     try:
         while True:
             msg = await websocket.recv()

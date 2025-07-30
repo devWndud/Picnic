@@ -102,7 +102,7 @@ async def send_frames(cam, cam_idx, total_cams):
     direction = _getDirection(cam_idx, total_cams)
     windowName = f'{direction} (Camera {cam_idx} - {cam.device_path})'
 
-    unique_code = 'A7X2bQ9cLmY1'
+    uniqueCode = 'A7X2bQ9cLmY1'
 
     async with websockets.connect(f'ws://{ip}:8000') as ws:
         while True:
@@ -116,7 +116,7 @@ async def send_frames(cam, cam_idx, total_cams):
             payload = {
                 "img": list(img.tobytes()),
                 "cam_idx": cam_idx,
-                "unique_code": unique_code
+                "uniqueCode": uniqueCode
             }
             await ws.send(json.dumps(payload))
             result = await ws.recv()

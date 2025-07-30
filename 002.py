@@ -11,36 +11,38 @@ from gtts import gTTS
 
 ip = '222.231.24.5'
 ttsLock = threading.Lock()
+tts_request = None
+tts_thread_running = False
 
-tts_playing = False
-last_tts_request = None
+def tts_worker():
+    global tts_request, tts_thread_running
+    while True:
+        if tts_request is not None:
+            text = tts_request
+            tts_request = None
+            tts_path = f"tts_cache_{hash(text)}.mp3"
+            if not os.path.exists(tts_path):
+                tts = gTTS(text=text, lang='ko')
+                tts.save(tts_path)
+            with ttsLock:
+                subprocess.run(
+                    ["mpg123", tts_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+        else:
+            time.sleep(0.05)
 
-def speak_tts(text):
-    global tts_playing, last_tts_request
-    tts_playing = True
-    tts_path = f"tts_cache_{hash(text)}.mp3"
-    if not os.path.exists(tts_path):
-        tts = gTTS(text=text, lang='ko')
-        tts.save(tts_path)
-    with ttsLock:
-        subprocess.run(
-            ["mpg123", tts_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    tts_playing = False
-    # TTS 끝난 후, 마지막 요청이 있으면 바로 실행
-    if last_tts_request:
-        next_text = last_tts_request
-        last_tts_request = None
-        speak_tts_async(next_text)
+def start_tts_worker():
+    global tts_thread_running
+    if not tts_thread_running:
+        t = threading.Thread(target=tts_worker, daemon=True)
+        t.start()
+        tts_thread_running = True
 
 def speak_tts_async(text):
-    global tts_playing, last_tts_request
-    if tts_playing:
-        last_tts_request = text  # 마지막 요청만 저장
-    else:
-        threading.Thread(target=speak_tts, args=(text,), daemon=True).start()
+    global tts_request
+    tts_request = text
 
 class CameraThread(threading.Thread):
     def __init__(self, device_path):
@@ -173,4 +175,5 @@ async def main():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    start_tts_worker()
     asyncio.run(main())

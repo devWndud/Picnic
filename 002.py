@@ -1,3 +1,4 @@
+
 import websockets
 import asyncio
 import json
@@ -11,7 +12,7 @@ from gtts import gTTS
 ip = '222.231.24.5'
 ttsLock = threading.Lock()
 
-def speak_tts(text):
+def _speak_tts(text):
     tts_path = f"tts_cache_{hash(text)}.mp3"
     if not os.path.exists(tts_path):
         tts = gTTS(text=text, lang='ko')
@@ -23,11 +24,8 @@ def speak_tts(text):
             stderr=subprocess.DEVNULL
         )
 
-def speak_tts_async(text):
-    threading.Thread(target=speak_tts, args=(text,), daemon=True).start()
-
-def play_abnormal_notice():
-    speak_tts("비정상 객체가 인식되었습니다")
+def _speakTtsAsync(text):
+    threading.Thread(target=_speak_tts, args=(text,), daemon=True).start()
 
 class CameraThread(threading.Thread):
     def __init__(self, device_path):
@@ -69,27 +67,27 @@ def _findVideoDevices():
             devices.append(path)
     return devices
 
-def get_direction(idx, total):
-    direction_map = ["Front", "Left", "Right"]
-    if idx < len(direction_map):
-        return direction_map[idx]
+def _getDirection(idx, total):
+    directionMap = ["Front", "Left", "Right"]
+    if idx < len(directionMap):
+        return directionMap[idx]
     else:
         return f"Extra {idx}"
 
 async def send_frames(cam, cam_idx, total_cams):
-    last_tts_msg = None
-    last_tts_time = 0
-    direction = get_direction(cam_idx, total_cams)
-    window_name = f'{direction} (Camera {cam_idx} - {cam.device_path})'
+    lastTtsMsg = None
+    lastTtsTime = 0
+    direction = _getDirection(cam_idx, total_cams)
+    windowName = f'{direction} (Camera {cam_idx} - {cam.device_path})'
 
     unique_code = 'A7X2bQ9cLmY1'
 
     async with websockets.connect(f'ws://{ip}:8000') as ws:
         while True:
-            # 2초 블록 제거: 프레임/인식은 항상 계속!
             if not cam.ret or cam.frame is None:
                 await asyncio.sleep(0.01)
                 continue
+
             frame = cam.frame.copy()
             frame = cv2.resize(frame, (640, 360))
             _, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
@@ -101,16 +99,17 @@ async def send_frames(cam, cam_idx, total_cams):
             await ws.send(json.dumps(payload))
             result = await ws.recv()
             result_dict = json.loads(result)
-            # TTS 중복 방지만 적용
+
             if cam_idx == 0 and "tts" in result_dict:
-                tts_msg = result_dict["tts"]
+                ttsMsg = result_dict["tts"]
                 now = time.time()
-                if tts_msg:
-                    if tts_msg != last_tts_msg or (now - last_tts_time) > 2:
-                        print(f"[{window_name}]", tts_msg)
-                        speak_tts_async(tts_msg)
-                        last_tts_msg = tts_msg
-                        last_tts_time = now
+                if ttsMsg:
+                    if ttsMsg != lastTtsMsg or (now - lastTtsTime) > 2:
+                        print(f"[{windowName}]", ttsMsg)
+                        _speakTtsAsync(ttsMsg)
+                        lastTtsMsg = ttsMsg
+                        lastTtsTime = now
+
             if "detections" in result_dict:
                 for det in result_dict["detections"]:
                     x1, y1, x2, y2 = det["box"]
@@ -120,14 +119,16 @@ async def send_frames(cam, cam_idx, total_cams):
                     cv2.putText(frame, f'{direction}', (x1, y1 - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                     cv2.putText(frame, f'{label} {conf:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(frame, f'{direction}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-            cv2.imshow(window_name, frame)
+            cv2.imshow(windowName, frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-    cv2.destroyWindow(window_name)
+    cv2.destroyWindow(windowName)
 
 async def main():
     device_paths = _findVideoDevices()
-    print("[INFO] Found devices:", device_paths)
+
+    print("디바이스 : ", device_paths)
+
     cameras = [CameraThread(dev) for dev in device_paths]
     for cam in cameras:
         if cam.running:
@@ -144,7 +145,7 @@ async def main():
         except KeyboardInterrupt:
             pass
     else:
-        print("No camera")
+        print("카메라 없음")
 
     for cam in cameras:
         cam.stop()

@@ -18,7 +18,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 model = YOLO('yolov8x.pt')
 
-latest_frames = {}
+latestFrames = {}
 frame_lock = threading.Lock()
 
 recent_bottle_boxes = []  # [(box, timestamp)]
@@ -33,17 +33,17 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 gpt_lock = threading.Lock()
 
-def update_latest_frame(img, unique_code):
-    global latest_frames
+def updateLatestFrame(img, unique_code):
+    global latestFrames
     with frame_lock:
-        latest_frames[unique_code] = img.copy()
+        latestFrames[unique_code] = img.copy()
 
 @app.route('/video_feed/<unique_code>')
 def video_feed(unique_code):
     def generate():
         while True:
             with frame_lock:
-                frame = latest_frames.get(unique_code)
+                frame = latestFrames.get(unique_code)
                 if frame is None:
                     continue
                 ret, jpeg = cv2.imencode('.jpg', frame)
@@ -219,7 +219,7 @@ async def handle_client(websocket):
                     cv2.putText(img, korean_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if cam_idx == 0:
-                update_latest_frame(img, unique_code)
+                updateLatestFrame(img, unique_code)
 
             for det in detections:
                 det["risk"] = computeRisk(det, width)
@@ -247,13 +247,13 @@ async def handle_client(websocket):
                     zoneCenter = boxCenter
                     break
                 if "left" in zones:
-                    ttsMsg = "오른쪽으로 피하세요."
+                    ttsMsg = "오른쪽으로 가세요."
                     ttsDebug = zoneCenter
                 elif "right" in zones:
-                    ttsMsg = "왼쪽으로 피하세요."
+                    ttsMsg = "왼쪽으로 가세요."
                     ttsDebug = zoneCenter
                 elif "centerLeft" in zones or "centerRight" in zones:
-                    ttsMsg = "정지하세요"
+                    ttsMsg = "잠시 정지하세요"
                     ttsDebug = zoneCenter
             if ttsMsg:
                 print(f"[TTS] {ttsMsg} (center_x: {ttsDebug})", flush=True)

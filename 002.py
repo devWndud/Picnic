@@ -110,16 +110,8 @@ async def send_frames(cam, cam_idx, total_cams):
             result_dict = json.loads(result)
 
             # 2단계: 자가 진단 (TTS)
-            played = False
-            if cam_idx == 0 and "detections" in result_dict:
-                if any(det.get("abnormal") for det in result_dict["detections"]):
-                    play_abnormal_notice()
-                    last_tts_time = time.time()
-                    played = True
-
-            if not played and cam_idx == 0 and "tts" in result_dict:
+            if cam_idx == 0 and "tts" in result_dict:
                 tts_msg = result_dict["tts"]
-                now = time.time()
                 if tts_msg:
                     if tts_msg != last_tts_msg or (now - last_tts_time) > 2:
                         print(f"[{window_name}]", tts_msg)

@@ -228,38 +228,35 @@ async def handle_client(websocket):
             ttsMsg = ""
             ttsDebug = None
             zoneCenter = None
-            for det in detections:
-                label = det.get("label", "")
-                x1, y1, x2, y2 = det["box"]
-                boxArea = (x2 - x1) * (y2 - y1)
-                risk = det.get("risk", det.get("confidence", 0))
-                if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
-                    continue
-                if label == "person" and boxArea < 30000:
-                    continue
-                if risk < 0.5:
-                    continue
-                boxCenter = (x1 + x2) / 2
-                zoneCenter = boxCenter
-                break
-            if "left" in zones:
-                ttsMsg = "오른쪽으로 피하세요."
-                ttsDebug = zoneCenter
-            elif "right" in zones:
-                ttsMsg = "왼쪽으로 피하세요."
-                ttsDebug = zoneCenter
-            elif "centerLeft" in zones or "centerRight" in zones:
-                ttsMsg = "정지하세요"
-                ttsDebug = zoneCenter
+            abnormal_detected = any(det.get("label", "") == "bottle" for det in detections)
+            if abnormal_detected:
+                ttsMsg = "비정상 객체가 인식되었습니다"
+            else:
+                for det in detections:
+                    label = det.get("label", "")
+                    x1, y1, x2, y2 = det["box"]
+                    boxArea = (x2 - x1) * (y2 - y1)
+                    risk = det.get("risk", det.get("confidence", 0))
+                    if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
+                        continue
+                    if label == "person" and boxArea < 30000:
+                        continue
+                    if risk < 0.5:
+                        continue
+                    boxCenter = (x1 + x2) / 2
+                    zoneCenter = boxCenter
+                    break
+                if "left" in zones:
+                    ttsMsg = "오른쪽으로 피하세요."
+                    ttsDebug = zoneCenter
+                elif "right" in zones:
+                    ttsMsg = "왼쪽으로 피하세요."
+                    ttsDebug = zoneCenter
+                elif "centerLeft" in zones or "centerRight" in zones:
+                    ttsMsg = "정지하세요"
+                    ttsDebug = zoneCenter
             if ttsMsg:
                 print(f"[TTS] {ttsMsg} (center_x: {ttsDebug})", flush=True)
-
-            # 감지 결과를 보낼 때, 프레임 내 첫 번째 비정상 객체의 tts가 있으면 포함
-            tts_to_send = None
-            for d in detections:
-                if d.get("tts"):
-                    tts_to_send = d["tts"]
-                    break
             await websocket.send(json.dumps({
                 "tts": ttsMsg,
                 "detections": detections

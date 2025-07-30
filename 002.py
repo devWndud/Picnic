@@ -37,6 +37,13 @@ def play_mp3_file(mp3_path):
     except Exception as e:
         print("MP3 PLAY ERROR:", e)
 
+def play_abnormal_notice():
+    tts_path = os.path.join(os.path.dirname(__file__), "abnormal_notice.mp3")
+    if not os.path.exists(tts_path):
+        tts = gTTS(text="비정상 객체가 인식되었습니다", lang='ko')
+        tts.save(tts_path)
+    play_mp3_file(tts_path)
+
 class CameraThread(threading.Thread):
     def __init__(self, device_path):
         super().__init__()
@@ -114,7 +121,8 @@ async def send_frames(cam, cam_idx, total_cams):
             # 2단계: 자가 진단 (TTS)
             if cam_idx == 0 and "detections" in result_dict:
                 if any(det.get("abnormal") for det in result_dict["detections"]):
-                    play_mp3_file("010.mp3")  # 필요시 파일명 변경
+                    play_mp3_file("010.mp3")  # 또는 recover.mp3 등
+                    play_abnormal_notice()
 
             if cam_idx == 0 and "tts" in result_dict:
                 tts_msg = result_dict["tts"]

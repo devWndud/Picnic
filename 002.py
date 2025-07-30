@@ -74,6 +74,8 @@ def _getDirection(idx, total):
     else:
         return f"Extra {idx}"
 
+DANGER_LABELS = {"person", "car", "bicycle", "motorcycle", "bus", "truck"}
+
 async def send_frames(cam, cam_idx, total_cams):
     lastTtsMsg = None
     lastTtsTime = 0
@@ -112,8 +114,10 @@ async def send_frames(cam, cam_idx, total_cams):
 
             if "detections" in result_dict:
                 for det in result_dict["detections"]:
-                    x1, y1, x2, y2 = det["box"]
                     label = det["kor_label"] if "kor_label" in det else det["label"]
+                    if label not in DANGER_LABELS:
+                        continue  # 바닥, 벽 등은 무시
+                    x1, y1, x2, y2 = det["box"]
                     conf = det["confidence"]
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(frame, f'{direction}', (x1, y1 - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)

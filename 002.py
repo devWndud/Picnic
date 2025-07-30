@@ -12,20 +12,19 @@ ip = '222.231.24.5'
 ttsLock = threading.Lock()
 
 def speak_tts(text):
-    if ttsLock.locked():
-        return
+    tts_path = f"tts_cache_{hash(text)}.mp3"
+    if not os.path.exists(tts_path):
+        tts = gTTS(text=text, lang='ko')
+        tts.save(tts_path)
     with ttsLock:
-        try:
-            print(text)
-            tts = gTTS(text=text, lang='ko')
-            tts.save("tts.mp3")
-            subprocess.run(
-                ["mpg123", "tts.mp3"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception as e:
-            print("TTS ERROR:", e)
+        subprocess.run(
+            ["mpg123", tts_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+def speak_tts_async(text):
+    threading.Thread(target=speak_tts, args=(text,), daemon=True).start()
 
 def play_abnormal_notice():
     speak_tts("비정상 객체가 인식되었습니다")
@@ -115,7 +114,7 @@ async def send_frames(cam, cam_idx, total_cams):
                 if tts_msg:
                     if tts_msg != last_tts_msg or (now - last_tts_time) > 2:
                         print(f"[{window_name}]", tts_msg)
-                        speak_tts(tts_msg)
+                        speak_tts_async(tts_msg)
                         last_tts_msg = tts_msg
                         last_tts_time = time.time()
 

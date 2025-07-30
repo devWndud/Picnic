@@ -19,9 +19,9 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 model = YOLO('yolov8x.pt')
 
 latestFrames = {}
-frame_lock = threading.Lock()
+frameLock = threading.Lock()
 
-recent_bottle_boxes = []  # [(box, timestamp)]
+recentBottleBoxes = []
 
 app = Flask(__name__)
 
@@ -33,17 +33,17 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 gpt_lock = threading.Lock()
 
-def updateLatestFrame(img, unique_code):
+def updateLatestFrame(img, uniqueCode):
     global latestFrames
-    with frame_lock:
-        latestFrames[unique_code] = img.copy()
+    with frameLock:
+        latestFrames[uniqueCode] = img.copy()
 
-@app.route('/video_feed/<unique_code>')
-def video_feed(unique_code):
+@app.route('/video_feed/<uniqueCode>')
+def video_feed(uniqueCode):
     def generate():
         while True:
-            with frame_lock:
-                frame = latestFrames.get(unique_code)
+            with frameLock:
+                frame = latestFrames.get(uniqueCode)
                 if frame is None:
                     continue
                 ret, jpeg = cv2.imencode('.jpg', frame)
@@ -55,25 +55,24 @@ def video_feed(unique_code):
             time.sleep(0.05)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def is_abnormal(det, img_shape):
-    # label이 bottle이면 무조건 비정상
+def _isAbnormal(det, img_shape):
     return det["label"] == "bottle"
 
-def is_recent_bottle(box):
+def _isRecentBottle(box):
     now = time.time()
-    for prev_box, ts in recent_bottle_boxes:
+    for prev_box, ts in recentBottleBoxes:
         if (now - ts) < 10:
             return True
     return False
 
-def ask_gpt_about_bbox(label, box, cropped_img):
+def _askGptAboutBbox(label, box, croppedImg):
     if not gpt_lock.acquire(blocking=False):
         print("[DEBUG] GPT Vision API가 이미 동작 중이므로 이번 요청은 건너뜁니다.")
         return "비정상"
     try:
         import time
         start_time = time.time()
-        _, buffer = cv2.imencode('.jpg', cropped_img)
+        _, buffer = cv2.imencode('.jpg', croppedImg)
         img_b64 = base64.b64encode(buffer).decode('utf-8')
         prompt = (
             f"이 이미지는 {label}의 바운딩박스({box})입니다."
@@ -109,49 +108,64 @@ def ask_gpt_about_bbox(label, box, cropped_img):
     finally:
         gpt_lock.release()
 
-# 위험도(risk) 계산 함수
 width, height = 640, 360
 
 def computeRisk(det, frameWidth):
     risk = det.get("confidence", 0)
     label = det.get("label", "")
+
     x1, y1, x2, y2 = det["box"]
+
     boxArea = (x2 - x1) * (y2 - y1)
     minPersonArea = 30000
+
     if label == "person" and boxArea < minPersonArea:
         return 0
+    
     boxCenter = (x1 + x2) / 2
     leftThird = frameWidth / 3
     rightThird = 2 * frameWidth / 3
+
     if leftThird < boxCenter < rightThird:
         risk += 0.3
+
     dangerLabels = ["car", "person", "motorcycle", "bus", "truck", "bicycle"]
+
     if label.lower() in dangerLabels:
         risk += 0.3
+
     return min(risk, 1.0)
 
 def _getObstacleZone(detections, frameWidth):
     minPersonArea = 30000
     dangerLabels = ["car", "person", "motorcycle", "bus", "truck", "bicycle"]
+
     left = frameWidth / 3
     centerLeft = left + (left / 2)
     centerRight = 2 * left + (left / 2)
+
     right = frameWidth
     zones = []
+
     for det in detections:
         label = det.get("label", "")
         x1, y1, x2, y2 = det["box"]
+
         boxArea = (x2 - x1) * (y2 - y1)
         risk = det.get("risk", det.get("confidence", 0))
+
         if label.lower() not in dangerLabels:
             continue
-        if label == "person" and boxArea < minPersonArea:
+        elif label == "person" and boxArea < minPersonArea:
             continue
-        if risk < 0.5:
+        elif risk < 0.5:
             continue
+
         boxCenter = (x1 + x2) / 2
+
         if boxCenter < left:
             zones.append("left")
+
         elif left <= boxCenter < centerLeft:
             zones.append("centerLeft")
         elif centerLeft <= boxCenter < 2*left:
@@ -160,23 +174,25 @@ def _getObstacleZone(detections, frameWidth):
             zones.append("right")
     return zones
 
-async def handle_client(websocket):
+async def _handleClient(websocket):
     print("[INFO] Client connected")
     try:
         while True:
             msg = await websocket.recv()
             data = json.loads(msg)
+
             cam_idx = data.get("cam_idx", 0)
-            unique_code = data.get("unique_code", "default")
-            img_bytes = bytes(data["img"])
-            img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+            uniqueCode = data.get("uniqueCode", "default")
+
+            imgBytes = bytes(data["img"])
+            img = cv2.imdecode(np.frombuffer(imgBytes, np.uint8), cv2.IMREAD_COLOR)
 
             if img is None:
                 continue
 
             results = model(img, verbose=False)
             detections = []
-            gpt_called_this_frame = False  # 한 프레임에 한 번만 GPT 호출
+            gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -190,36 +206,32 @@ async def handle_client(websocket):
                         "label": label,
                         "koreanLabel": korean_label
                     }
-                    if is_abnormal(det, img.shape):
-                        if det["label"] == "bottle" and is_recent_bottle(det["box"]):
-                            print(f"[DEBUG] bottle 비정상 객체 재인식 방지: 좌표={det['box']}, 라벨={label}, 10초 이내 중복", flush=True)
-                            det["abnormal"] = False  # 10초 이내면 무시
-                        elif det["label"] == "bottle" and not gpt_called_this_frame:
-                            print(f"[DEBUG] bottle 비정상 객체 최초 인식: 좌표={det['box']}, 라벨={label}", flush=True)
+                    if _isAbnormal(det, img.shape):
+                        if det["label"] == "bottle" and _isRecentBottle(det["box"]):
+                            det["abnormal"] = False
+
+                        elif det["label"] == "bottle" and not gptCalledThisFrame:
                             det["abnormal"] = True
-                            recent_bottle_boxes.append((det["box"], time.time()))
-                            cropped_img = img[y1:y2, x1:x2]
-                            print(f"[DEBUG] GPT Vision API 호출 시작: 좌표={det['box']}", flush=True)
-                            gpt_result = ask_gpt_about_bbox(label, [x1, y1, x2, y2], cropped_img)
-                            print(f"[DEBUG] GPT Vision API 응답 도착: 좌표={det['box']}", flush=True)
-                            print(f"[DEBUG] GPT 결과: {gpt_result}", flush=True)
+                            recentBottleBoxes.append((det["box"], time.time()))
+                            croppedImg = img[y1:y2, x1:x2]
+                            gpt_result = _askGptAboutBbox(label, [x1, y1, x2, y2], croppedImg)
+                            print(f"GPT : {gpt_result}", flush=True)
+
                             if "정상" in gpt_result:
                                 det["abnormal"] = False
-                            else:
-                                det["tts"] = "tts/010.mp3"  # 비정상일 때 tts 파일명 전송
-                            gpt_called_this_frame = True
+                                
+                            gptCalledThisFrame = True
                         else:
-                            # 한 프레임에서 이미 GPT를 호출했다면, 나머지 bottle은 10초 재인식 방지로 처리
-                            print(f"[DEBUG] bottle 비정상 객체(동일 프레임 내 추가): 좌표={det['box']}, 라벨={label}, GPT 호출 생략", flush=True)
                             det["abnormal"] = False
                     else:
                         det["abnormal"] = False
+
                     detections.append(det)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(img, korean_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if cam_idx == 0:
-                updateLatestFrame(img, unique_code)
+                updateLatestFrame(img, uniqueCode)
 
             for det in detections:
                 det["risk"] = computeRisk(det, width)
@@ -229,6 +241,7 @@ async def handle_client(websocket):
             ttsDebug = None
             zoneCenter = None
             abnormal_detected = any(det.get("label", "") == "bottle" for det in detections)
+
             if abnormal_detected:
                 ttsMsg = "비정상 객체가 인식되었습니다"
             else:
@@ -237,15 +250,20 @@ async def handle_client(websocket):
                     x1, y1, x2, y2 = det["box"]
                     boxArea = (x2 - x1) * (y2 - y1)
                     risk = det.get("risk", det.get("confidence", 0))
+
                     if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
                         continue
+
                     if label == "person" and boxArea < 30000:
                         continue
+
                     if risk < 0.5:
                         continue
+
                     boxCenter = (x1 + x2) / 2
                     zoneCenter = boxCenter
                     break
+
                 if "left" in zones:
                     ttsMsg = "오른쪽으로 가세요."
                     ttsDebug = zoneCenter
@@ -256,18 +274,18 @@ async def handle_client(websocket):
                     ttsMsg = "잠시 정지하세요"
                     ttsDebug = zoneCenter
             if ttsMsg:
-                print(f"[TTS] {ttsMsg} (center_x: {ttsDebug})", flush=True)
+                print(f"{ttsMsg} / center : {ttsDebug}", flush=True)
             await websocket.send(json.dumps({
                 "tts": ttsMsg,
                 "detections": detections
             }))
 
     except websockets.exceptions.ConnectionClosed:
-        print("[INFO] Client disconnected")
+        pass
 
 async def start_websocket_server():
-    async with websockets.serve(handle_client, "0.0.0.0", 8000):
-        print("[INFO] WebSocket server started on ws://0.0.0.0:8000")
+    async with websockets.serve(_handleClient, "0.0.0.0", 8000):
+        print("WebSocket server started on ws://0.0.0.0:8000")
         await asyncio.Future()
 
 def main():

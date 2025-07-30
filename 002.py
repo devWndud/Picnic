@@ -11,41 +11,41 @@ from gtts import gTTS
 
 ip = '222.231.24.5'
 ttsLock = threading.Lock()
-tts_request = None
-tts_thread_running = False
-tts_block_until = 0
+ttsRequest = None
+ttsThreadRunning = False
+ttsBlockUntil = 0
 
 def tts_worker():
-    global tts_request, tts_thread_running, tts_block_until
+    global ttsRequest, ttsThreadRunning, ttsBlockUntil
     while True:
         now = time.time()
-        if tts_request is not None and now > tts_block_until:
-            text = tts_request
-            tts_request = None
-            tts_path = f"tts_cache_{hash(text)}.mp3"
-            if not os.path.exists(tts_path):
-                tts = gTTS(text=text, lang='ko')
-                tts.save(tts_path)
+        if ttsRequest is not None and now > ttsBlockUntil:
+            text = ttsRequest
+            ttsRequest = None
+            ttsPath = f"tts.mp3"
+            
+            tts = gTTS(text=text, lang='ko')
+            tts.save(ttsPath)
             with ttsLock:
                 subprocess.run(
-                    ["mpg123", tts_path],
+                    ["mpg123", ttsPath],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-            tts_block_until = time.time() + 2  # 2초 블록
+            ttsBlockUntil = time.time() + 2  # 2초 블록
         else:
             time.sleep(0.05)
 
 def start_tts_worker():
-    global tts_thread_running
-    if not tts_thread_running:
+    global ttsThreadRunning
+    if not ttsThreadRunning:
         t = threading.Thread(target=tts_worker, daemon=True)
         t.start()
-        tts_thread_running = True
+        ttsThreadRunning = True
 
 def speak_tts_async(text):
-    global tts_request
-    tts_request = text
+    global ttsRequest
+    ttsRequest = text
 
 class CameraThread(threading.Thread):
     def __init__(self, device_path):

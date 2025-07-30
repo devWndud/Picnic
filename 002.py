@@ -27,22 +27,8 @@ def speak_tts(text):
         except Exception as e:
             print("TTS ERROR:", e)
 
-def play_mp3_file(mp3_path):
-    try:
-        subprocess.run(
-            ["mpg123", mp3_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    except Exception as e:
-        print("MP3 PLAY ERROR:", e)
-
 def play_abnormal_notice():
-    tts_path = os.path.join(os.path.dirname(__file__), "abnormal_notice.mp3")
-    if not os.path.exists(tts_path):
-        tts = gTTS(text="비정상 객체가 인식되었습니다", lang='ko')
-        tts.save(tts_path)
-    play_mp3_file(tts_path)
+    speak_tts("비정상 객체가 인식되었습니다")
 
 class CameraThread(threading.Thread):
     def __init__(self, device_path):
@@ -101,6 +87,11 @@ async def send_frames(cam, cam_idx, total_cams):
 
     async with websockets.connect(f'ws://{ip}:8000') as ws:
         while True:
+            now = time.time()
+            if now - last_tts_time < 2:
+                await asyncio.sleep(0.01)
+                continue
+
             if not cam.ret or cam.frame is None:
                 await asyncio.sleep(0.01)
                 continue
@@ -119,12 +110,14 @@ async def send_frames(cam, cam_idx, total_cams):
             result_dict = json.loads(result)
 
             # 2단계: 자가 진단 (TTS)
+            played = False
             if cam_idx == 0 and "detections" in result_dict:
                 if any(det.get("abnormal") for det in result_dict["detections"]):
-                    play_mp3_file("010.mp3")  # 또는 recover.mp3 등
                     play_abnormal_notice()
+                    last_tts_time = time.time()
+                    played = True
 
-            if cam_idx == 0 and "tts" in result_dict:
+            if not played and cam_idx == 0 and "tts" in result_dict:
                 tts_msg = result_dict["tts"]
                 now = time.time()
                 if tts_msg:
@@ -132,7 +125,7 @@ async def send_frames(cam, cam_idx, total_cams):
                         print(f"[{window_name}]", tts_msg)
                         speak_tts(tts_msg)
                         last_tts_msg = tts_msg
-                        last_tts_time = now
+                        last_tts_time = time.time()
 
             if "detections" in result_dict:
                 for det in result_dict["detections"]:

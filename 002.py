@@ -32,7 +32,7 @@ def tts_worker():
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-            ttsBlockUntil = time.time() + 2  # 2초 블록
+            ttsBlockUntil = time.time() + 2
         else:
             time.sleep(0.05)
 
@@ -96,7 +96,7 @@ def _getDirection(idx, total):
 
 DANGER_LABELS = {"person", "car", "bicycle", "motorcycle", "bus", "truck"}
 
-async def send_frames(cam, cam_idx, total_cams):
+async def _sendFrames(cam, cam_idx, total_cams):
     lastTtsMsg = None
     lastTtsTime = 0
     direction = _getDirection(cam_idx, total_cams)
@@ -135,13 +135,16 @@ async def send_frames(cam, cam_idx, total_cams):
             if "detections" in result_dict:
                 for det in result_dict["detections"]:
                     label = det["kor_label"] if "kor_label" in det else det["label"]
+
                     if label not in DANGER_LABELS:
                         continue  # 바닥, 벽 등은 무시
                     x1, y1, x2, y2 = det["box"]
+
                     conf = det["confidence"]
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(frame, f'{direction}', (x1, y1 - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                     cv2.putText(frame, f'{label} {conf:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
             cv2.putText(frame, f'{direction}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
             cv2.imshow(windowName, frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -161,7 +164,7 @@ async def main():
     tasks = []
     for idx, cam in enumerate(cameras):
         if cam.running:
-            tasks.append(asyncio.create_task(send_frames(cam, idx, len(cameras))))
+            tasks.append(asyncio.create_task(_sendFrames(cam, idx, len(cameras))))
 
     if tasks:
         try:

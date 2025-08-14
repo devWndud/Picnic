@@ -35,32 +35,24 @@ if device == 'cuda':
     print(f"GPU: {torch.cuda.get_device_name()}")
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
-    # GPU 메모리 할당 전략 강제 설정
-    torch.cuda.set_per_process_memory_fraction(0.98)
-    torch.cuda.memory.set_per_process_memory_fraction(0.98)
-    
-    # 메모리 풀링 활성화
-    torch.cuda.memory.set_per_process_memory_fraction(0.98)
+    # GPU 메모리 할당 전략 (보수적 설정)
+    torch.cuda.set_per_process_memory_fraction(0.85)  # 85%로 제한
 
 # YOLO 모델을 GPU에서 실행하도록 설정
 model = YOLO('yolov8x.pt')
 model.to(device)
 
-# GPU 메모리 강제 할당 (초기화 시)
+# GPU 메모리 상태 확인
 if device == 'cuda':
-    print("🔧 GPU 메모리 강제 할당 중...")
-    # 큰 텐서들을 생성하여 메모리 사용량 증가
-    dummy_tensors = []
-    for i in range(5):  # 5개의 큰 텐서 생성
-        tensor = torch.randn(2000, 2000, 2000, device=device, dtype=torch.float16)
-        dummy_tensors.append(tensor)
-    
-    # 메모리 사용량 확인
     allocated = torch.cuda.memory_allocated() / 1024**3
-    print(f"강제 할당 후 GPU 메모리: {allocated:.2f}GB")
+    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    print(f"현재 GPU 메모리 사용량: {allocated:.2f}GB / {total:.1f}GB")
     
-    # 일부 텐서는 유지하고 일부는 해제
-    del dummy_tensors[2:]  # 3개만 유지
+    # 메모리가 이미 많이 사용 중이면 경고
+    if allocated > total * 0.8:
+        print("⚠️  GPU 메모리가 이미 많이 사용 중입니다. 기존 메모리를 정리합니다.")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
 # 모델 추론 설정 최적화 (RTX 5000 Ada Generation용)
 model.conf = 0.2   # 신뢰도 임계값 낮춤 (더 많은 객체 검출)
@@ -71,8 +63,7 @@ model.max_det = 500  # 최대 검출 개수 대폭 증가 (32GB 메모리 최대
 
 # GPU 메모리 최적화를 위한 추가 설정
 if device == 'cuda':
-    # RTX 5000 Ada Generation (32GB) 최대 활용 설정
-    torch.cuda.set_per_process_memory_fraction(0.98)  # GPU 메모리의 98% 사용
+    # RTX 5000 Ada Generation (32GB) 안전한 활용 설정
     # 자동 혼합 정밀도 활성화 (메모리 절약 및 속도 향상)
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -80,16 +71,8 @@ if device == 'cuda':
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     torch.backends.cuda.enable_math_sdp(True)
-    # 메모리 할당 전략 최적화
-    torch.cuda.set_per_process_memory_fraction(0.98)
-    # 메모리 풀링 활성화
-    torch.cuda.empty_cache()
-    # GPU 메모리 할당 전략을 aggressive로 설정
-    torch.cuda.memory.set_per_process_memory_fraction(0.98)
-    # 메모리 캐시 크기 증가
-    torch.cuda.memory.set_per_process_memory_fraction(0.98)
 
-print("YOLO model loaded with aggressive GPU optimization for RTX 5000 Ada Generation")
+print("YOLO model loaded with safe GPU optimization for RTX 5000 Ada Generation")
 
 latestFrames = {}
 frameLock = threading.Lock()
@@ -338,15 +321,13 @@ async def _handleClient(websocket):
                 cleanup_gpu_memory()
                 print_gpu_stats()
                 
-                # GPU 메모리 사용률이 낮으면 강제로 메모리 할당
+                # GPU 메모리 상태 모니터링
                 if device == 'cuda':
                     allocated = torch.cuda.memory_allocated() / 1024**3
                     total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                    if (allocated / total) < 0.1:  # 10% 미만 사용 시
-                        print("🔄 GPU 메모리 사용률이 낮아 강제 할당을 시도합니다...")
-                        # 더 큰 텐서를 생성하여 메모리 사용량 증가
-                        dummy_tensor = torch.randn(1000, 1000, 1000, device=device, dtype=torch.float16)
-                        del dummy_tensor
+                    if (allocated / total) > 0.9:  # 90% 이상 사용 시
+                        print("⚠️  GPU 메모리 사용률이 높습니다. 메모리를 정리합니다.")
+                        torch.cuda.empty_cache()
 
             for det in detections:
                 det["risk"] = computeRisk(det, width)

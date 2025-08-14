@@ -5,6 +5,7 @@ import time
 import cv2
 import threading
 import os
+import base64
 
 ip = '222.231.24.5'
 
@@ -117,11 +118,14 @@ async def _sendFrames(video, video_idx, total_videos):
             frame = cv2.resize(frame, (640, 360))
 
             t1 = time.perf_counter()
-            _, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            ok, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if not ok:
+                continue
+            img_b64 = base64.b64encode(img).decode('ascii')
             encode_ms = (time.perf_counter() - t1) * 1000
 
             payload = {
-                "img": list(img.tobytes()),
+                "img_b64": img_b64,
                 "cam_idx": video_idx,
                 "uniqueCode": uniqueCode,
                 "client_ts": time.time(),
@@ -170,14 +174,11 @@ async def _sendFrames(video, video_idx, total_videos):
                 cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
                 y += 18
 
-            # 최신 프레임만 표시 버퍼에 저장 (프레임 드랍)
             with shared['lock']:
                 shared['latest_frame'] = frame
 
-            # 콘솔 로그
             print(f"[Client {video_idx}] enc={encode_ms:.1f}ms send={send_ms:.1f}ms rtt={rtt_ms:.1f}ms total={total_cycle_ms:.1f}ms | server recv->infer={recv_to_infer_ms}ms infer={infer_ms}ms post={post_ms}ms total={server_total_ms}ms c2s={client_to_server_ms}ms")
 
-    # 종료 시 정리
     stop_event.set()
 
 async def main(max_videos=None):

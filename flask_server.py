@@ -254,6 +254,7 @@ async def _handleClient(websocket):
     try:
         while True:
             t_recv = time.perf_counter()
+            server_recv_ts = time.time()
             msg = await websocket.recv()
             t_after_recv = time.perf_counter()
             data = json.loads(msg)
@@ -262,7 +263,12 @@ async def _handleClient(websocket):
             uniqueCode = data.get("uniqueCode", "default")
             client_ts = data.get("client_ts")
 
-            imgBytes = bytes(data["img"])
+            # Base64 이미지 디코딩 지원
+            if "img_b64" in data:
+                imgBytes = base64.b64decode(data["img_b64"])  # type: ignore
+            else:
+                imgBytes = bytes(data["img"])  # 하위호환
+
             t_decode0 = time.perf_counter()
             img = cv2.imdecode(np.frombuffer(imgBytes, np.uint8), cv2.IMREAD_COLOR)
             t_decode1 = time.perf_counter()
@@ -271,7 +277,7 @@ async def _handleClient(websocket):
             if img is None:
                 continue
 
-            # 배치 처리를 위한 최적화
+            # 추론
             t_infer0 = time.perf_counter()
             with torch.inference_mode():
                 results = model(img, verbose=False, device=device, half=True, imgsz=1280)
@@ -323,20 +329,20 @@ async def _handleClient(websocket):
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
 
-            # 실제 프레임 너비로 위험도 및 구역 계산
             frameWidth = int(img.shape[1])
             for det in detections:
                 det["risk"] = computeRisk(det, frameWidth)
 
             zones = _getObstacleZone(detections, frameWidth)
 
-            # 지연 시간 집계
             recv_to_infer_ms = (t_infer0 - t_after_recv) * 1000
             server_total_ms = (time.perf_counter() - t_recv) * 1000
+
+            # 클라이언트->서버 지연은 서버 수신 시각과 클라 송신 시각 차이 사용
             client_to_server_ms = None
-            if client_ts:
+            if client_ts is not None:
                 try:
-                    client_to_server_ms = (t_after_recv - client_ts) * 1000
+                    client_to_server_ms = (server_recv_ts - float(client_ts)) * 1000.0
                 except Exception:
                     client_to_server_ms = None
 

@@ -41,6 +41,10 @@ if device == 'cuda':
 # YOLO 모델을 GPU에서 실행하도록 설정
 model = YOLO('yolov8x.pt')
 model.to(device)
+try:
+    model.fuse()
+except Exception:
+    pass
 
 # GPU 메모리 상태 확인
 if device == 'cuda':
@@ -249,26 +253,35 @@ def _getObstacleZone(detections, frameWidth):
 async def _handleClient(websocket):
     try:
         while True:
+            t_recv = time.perf_counter()
             msg = await websocket.recv()
+            t_after_recv = time.perf_counter()
             data = json.loads(msg)
 
             cam_idx = data.get("cam_idx", 0)
             uniqueCode = data.get("uniqueCode", "default")
+            client_ts = data.get("client_ts")
 
             imgBytes = bytes(data["img"])
+            t_decode0 = time.perf_counter()
             img = cv2.imdecode(np.frombuffer(imgBytes, np.uint8), cv2.IMREAD_COLOR)
+            t_decode1 = time.perf_counter()
+            decode_ms = (t_decode1 - t_decode0) * 1000
 
             if img is None:
                 continue
 
-            # 해상도는 입력 그대로 사용 (업스케일 제거)
-            # if img.shape[1] < 1280:
-            #     img = cv2.resize(img, (1280, 720))
-
             # 배치 처리를 위한 최적화
-            results = model(img, verbose=False, device=device, half=True)
+            t_infer0 = time.perf_counter()
+            with torch.inference_mode():
+                results = model(img, verbose=False, device=device, half=True, imgsz=1280)
+            t_infer1 = time.perf_counter()
+            infer_ms = (t_infer1 - t_infer0) * 1000
+
             detections = []
-            gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
+            gptCalledThisFrame = False
+
+            t_post0 = time.perf_counter()
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -289,57 +302,58 @@ async def _handleClient(websocket):
                     if _isAbnormal(det):
                         if det["label"] == "bottle" and _isRecentBottle(det["box"]):
                             det["abnormal"] = False
-
                         elif det["label"] == "bottle" and not gptCalledThisFrame:
                             det["abnormal"] = True
                             recentBottleBoxes.append((det["box"], time.time()))
                             croppedImg = img[y1:y2, x1:x2]
                             gpt_result = _askGptAboutBbox(label, [x1, y1, x2, y2], croppedImg)
-                            print(f"GPT : {gpt_result}", flush=True)
-
                             if "정상" in gpt_result:
                                 det["abnormal"] = False
-                                
                             gptCalledThisFrame = True
                         else:
                             det["abnormal"] = False
                     else:
                         det["abnormal"] = False
-
                     detections.append(det)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(img, kor_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            t_post1 = time.perf_counter()
+            post_ms = (t_post1 - t_post0) * 1000
 
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
 
-            # 주기적으로 GPU 메모리 정리 및 통계 출력 (매 50프레임마다)
-            if hasattr(_handleClient, 'frame_count'):
-                _handleClient.frame_count += 1
-            else:
-                _handleClient.frame_count = 1
-            
-            if _handleClient.frame_count % 50 == 0:  # 더 자주 체크
-                cleanup_gpu_memory()
-                print_gpu_stats()
-                
-                # GPU 메모리 상태 모니터링
-                if device == 'cuda':
-                    allocated = torch.cuda.memory_allocated() / 1024**3
-                    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                    if (allocated / total) > 0.9:  # 90% 이상 사용 시
-                        print("⚠️  GPU 메모리 사용률이 높습니다. 메모리를 정리합니다.")
-                        torch.cuda.empty_cache()
-
+            # 실제 프레임 너비로 위험도 및 구역 계산
+            frameWidth = int(img.shape[1])
             for det in detections:
-                det["risk"] = computeRisk(det, width)
+                det["risk"] = computeRisk(det, frameWidth)
 
-            zones = _getObstacleZone(detections, width)
+            zones = _getObstacleZone(detections, frameWidth)
+
+            # 지연 시간 집계
+            recv_to_infer_ms = (t_infer0 - t_after_recv) * 1000
+            server_total_ms = (time.perf_counter() - t_recv) * 1000
+            client_to_server_ms = None
+            if client_ts:
+                try:
+                    client_to_server_ms = (t_after_recv - client_ts) * 1000
+                except Exception:
+                    client_to_server_ms = None
+
+            times = {
+                "recv_to_infer_ms": round(recv_to_infer_ms, 1),
+                "decode_ms": round(decode_ms, 1),
+                "infer_ms": round(infer_ms, 1),
+                "post_ms": round(post_ms, 1),
+                "server_total_ms": round(server_total_ms, 1),
+                "client_to_server_ms": round(client_to_server_ms, 1) if client_to_server_ms is not None else None,
+            }
+            print(f"[Server cam {cam_idx}] times={times}")
+
             ttsMsg = ""
             ttsDebug = None
             zoneCenter = None
             _abnormalDetected = any(det.get("label", "") == "bottle" for det in detections)
-
             if _abnormalDetected:
                 ttsMsg = "비정상 객체가 인식되었습니다"
             else:
@@ -348,20 +362,15 @@ async def _handleClient(websocket):
                     x1, y1, x2, y2 = det["box"]
                     boxArea = (x2 - x1) * (y2 - y1)
                     risk = det.get("risk", det.get("confidence", 0))
-
                     if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
                         continue
-
                     if label == "person" and boxArea < 30000:
                         continue
-
                     if risk < 0.5:
                         continue
-
                     boxCenter = (x1 + x2) / 2
                     zoneCenter = boxCenter
                     break
-
                 if "left" in zones:
                     ttsMsg = "오른쪽으로 가세요."
                     ttsDebug = zoneCenter
@@ -376,7 +385,8 @@ async def _handleClient(websocket):
             try:
                 await websocket.send(json.dumps({
                     "tts": ttsMsg,
-                    "detections": detections
+                    "detections": detections,
+                    "times": times
                 }))
             except Exception as e:
                 print(f"send error: {e}", flush=True)
@@ -385,7 +395,7 @@ async def _handleClient(websocket):
         pass
 
 async def start_websocket_server():
-    async with websockets.serve(_handleClient, "0.0.0.0", 8000):
+    async with websockets.serve(_handleClient, "0.0.0.0", 8000, max_size=10*1024*1024):
         print("WebSocket server started on ws://0.0.0.0:8000")
         await asyncio.Future()
 

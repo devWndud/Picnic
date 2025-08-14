@@ -8,6 +8,29 @@ import os
 
 ip = '222.231.24.5'
 
+# 전역 정지 이벤트 (q로 종료 공유)
+stop_event = threading.Event()
+
+class DisplayThread(threading.Thread):
+    def __init__(self, window_name, shared):
+        super().__init__(daemon=True)
+        self.window_name = window_name
+        self.shared = shared
+
+    def run(self):
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        while not stop_event.is_set():
+            frame = None
+            with self.shared['lock']:
+                if self.shared['latest_frame'] is not None:
+                    frame = self.shared['latest_frame'].copy()
+            if frame is not None:
+                cv2.imshow(self.window_name, frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                stop_event.set()
+                break
+        cv2.destroyWindow(self.window_name)
+
 class VideoThread(threading.Thread):
     def __init__(self, video_path):
         super().__init__()
@@ -30,7 +53,7 @@ class VideoThread(threading.Thread):
         print(f"  FPS: {fps}, Frames: {frame_count}, Duration: {duration:.2f}s")
 
     def run(self):
-        while self.running:
+        while self.running and not stop_event.is_set():
             self.ret, self.frame = self.cap.read()
             if not self.ret:
                 if self.loop:
@@ -76,27 +99,49 @@ async def _sendFrames(video, video_idx, total_videos):
     direction = _getDirection(video_idx, total_videos)
     windowName = f'{direction} (Video {video_idx} - {os.path.basename(video.video_path)})'
 
+    # 공유 버퍼 (최신 프레임만 유지)
+    shared = {'latest_frame': None, 'lock': threading.Lock()}
+    disp = DisplayThread(windowName, shared)
+    disp.start()
+
     uniqueCode = 'A7X2bQ9cLmY1'
 
-    async with websockets.connect(f'ws://{ip}:8000') as ws:
-        while True:
+    async with websockets.connect(f'ws://{ip}:8000', max_size=10*1024*1024) as ws:
+        while not stop_event.is_set():
             if not video.ret or video.frame is None:
                 await asyncio.sleep(0.01)
                 continue
 
+            t0 = time.perf_counter()
             frame = video.frame.copy()
             frame = cv2.resize(frame, (640, 360))
 
+            t1 = time.perf_counter()
             _, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            encode_ms = (time.perf_counter() - t1) * 1000
+
             payload = {
                 "img": list(img.tobytes()),
                 "cam_idx": video_idx,
-                "uniqueCode": uniqueCode
+                "uniqueCode": uniqueCode,
+                "client_ts": time.time(),
             }
 
+            t2 = time.perf_counter()
             await ws.send(json.dumps(payload))
+            t3 = time.perf_counter()
             result = await ws.recv()
-            result_dict = json.loads(result)
+            t4 = time.perf_counter()
+
+            rtt_ms = (t4 - t2) * 1000
+            send_ms = (t3 - t2) * 1000
+            total_cycle_ms = (t4 - t0) * 1000
+
+            try:
+                result_dict = json.loads(result)
+            except Exception as e:
+                print(f"[Client {video_idx}] JSON parse error: {e}")
+                continue
 
             if "detections" in result_dict:
                 for det in result_dict["detections"]:
@@ -108,12 +153,32 @@ async def _sendFrames(video, video_idx, total_videos):
                     cv2.putText(frame, f'{direction}', (x1, y1 - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                     cv2.putText(frame, f'{label} {conf:.2f}', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            cv2.putText(frame, f'{direction}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-            cv2.imshow(windowName, frame)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    cv2.destroyWindow(windowName)
+            server_times = result_dict.get("times", {})
+            recv_to_infer_ms = server_times.get("recv_to_infer_ms")
+            infer_ms = server_times.get("infer_ms")
+            post_ms = server_times.get("post_ms")
+            server_total_ms = server_times.get("server_total_ms")
+            client_to_server_ms = server_times.get("client_to_server_ms")
+
+            # 오버레이 텍스트
+            overlay_lines = [
+                f"enc {encode_ms:.1f}ms | send {send_ms:.1f}ms | rtt {rtt_ms:.1f}ms | total {total_cycle_ms:.1f}ms",
+                f"srv: recv->infer {recv_to_infer_ms}ms | infer {infer_ms}ms | post {post_ms}ms | total {server_total_ms}ms | c2s {client_to_server_ms}ms"
+            ]
+            y = 20
+            for line in overlay_lines:
+                cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+                y += 18
+
+            # 최신 프레임만 표시 버퍼에 저장 (프레임 드랍)
+            with shared['lock']:
+                shared['latest_frame'] = frame
+
+            # 콘솔 로그
+            print(f"[Client {video_idx}] enc={encode_ms:.1f}ms send={send_ms:.1f}ms rtt={rtt_ms:.1f}ms total={total_cycle_ms:.1f}ms | server recv->infer={recv_to_infer_ms}ms infer={infer_ms}ms post={post_ms}ms total={server_total_ms}ms c2s={client_to_server_ms}ms")
+
+    # 종료 시 정리
+    stop_event.set()
 
 async def main(max_videos=None):
     video_paths = _findVideoFiles(max_videos)
@@ -140,7 +205,7 @@ async def main(max_videos=None):
         try:
             await asyncio.gather(*tasks)
         except KeyboardInterrupt:
-            pass
+            stop_event.set()
     else:
         print("재생 가능한 비디오 없음")
 

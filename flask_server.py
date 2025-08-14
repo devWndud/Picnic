@@ -27,12 +27,40 @@ if device == 'cuda':
     torch.backends.cudnn.deterministic = False
     # GPU 메모리 캐시 정리
     torch.cuda.empty_cache()
+    
+    # 리눅스 환경에서 GPU 메모리 최대 활용 설정
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,garbage_collection_threshold:0.8,roundup_power2_divisions:16,roundup_bypass_threshold_mb:128,backend:cudaMallocAsync,expandable_segments:True'
+    os.environ['CUDA_MEMORY_POOL_SIZE'] = '26843545600'  # 25GB
+    
     print(f"GPU: {torch.cuda.get_device_name()}")
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    
+    # GPU 메모리 할당 전략 강제 설정
+    torch.cuda.set_per_process_memory_fraction(0.98)
+    torch.cuda.memory.set_per_process_memory_fraction(0.98)
+    
+    # 메모리 풀링 활성화
+    torch.cuda.memory.set_per_process_memory_fraction(0.98)
 
 # YOLO 모델을 GPU에서 실행하도록 설정
 model = YOLO('yolov8x.pt')
 model.to(device)
+
+# GPU 메모리 강제 할당 (초기화 시)
+if device == 'cuda':
+    print("🔧 GPU 메모리 강제 할당 중...")
+    # 큰 텐서들을 생성하여 메모리 사용량 증가
+    dummy_tensors = []
+    for i in range(5):  # 5개의 큰 텐서 생성
+        tensor = torch.randn(2000, 2000, 2000, device=device, dtype=torch.float16)
+        dummy_tensors.append(tensor)
+    
+    # 메모리 사용량 확인
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    print(f"강제 할당 후 GPU 메모리: {allocated:.2f}GB")
+    
+    # 일부 텐서는 유지하고 일부는 해제
+    del dummy_tensors[2:]  # 3개만 유지
 
 # 모델 추론 설정 최적화 (RTX 5000 Ada Generation용)
 model.conf = 0.2   # 신뢰도 임계값 낮춤 (더 많은 객체 검출)

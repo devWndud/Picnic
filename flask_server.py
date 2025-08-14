@@ -34,22 +34,30 @@ if device == 'cuda':
 model = YOLO('yolov8x.pt')
 model.to(device)
 
-# 모델 추론 설정 최적화
+# 모델 추론 설정 최적화 (RTX 5000 Ada Generation용)
 model.conf = 0.25  # 신뢰도 임계값
 model.iou = 0.45   # IoU 임계값
 model.agnostic = False  # 클래스별 NMS
 model.multi_label = False  # 단일 라벨
-model.max_det = 100  # 최대 검출 개수
+model.max_det = 200  # 최대 검출 개수 증가 (32GB 메모리 활용)
 
 # GPU 메모리 최적화를 위한 추가 설정
 if device == 'cuda':
-    # GPU 메모리 할당 전략 설정
-    torch.cuda.set_per_process_memory_fraction(0.9)  # GPU 메모리의 90% 사용
+    # RTX 5000 Ada Generation (32GB) 최대 활용 설정
+    torch.cuda.set_per_process_memory_fraction(0.95)  # GPU 메모리의 95% 사용
     # 자동 혼합 정밀도 활성화 (메모리 절약 및 속도 향상)
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cuda.matmul.allow_tf32 = True
+    # CUDA 그래프 최적화 활성화
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
+    # 메모리 할당 전략 최적화
+    torch.cuda.set_per_process_memory_fraction(0.95)
+    # 메모리 풀링 활성화
+    torch.cuda.empty_cache()
 
-print("YOLO model loaded with GPU optimization")
+print("YOLO model loaded with GPU optimization for RTX 5000 Ada Generation")
 
 latestFrames = {}
 frameLock = threading.Lock()
@@ -71,6 +79,12 @@ def cleanup_gpu_memory():
     if device == 'cuda':
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+def print_gpu_stats():
+    if device == 'cuda':
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        cached = torch.cuda.memory_reserved() / 1024**3
+        print(f"GPU Memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB")
 
 def updateLatestFrame(img, uniqueCode):
     global latestFrames
@@ -226,7 +240,8 @@ async def _handleClient(websocket):
             if img is None:
                 continue
 
-            results = model(img, verbose=False, device=device)
+            # 배치 처리를 위한 최적화
+            results = model(img, verbose=False, device=device, half=True)  # FP16 사용으로 속도 향상
             detections = []
             gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
             for r in results:
@@ -270,7 +285,7 @@ async def _handleClient(websocket):
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
 
-            # 주기적으로 GPU 메모리 정리 (매 100프레임마다)
+            # 주기적으로 GPU 메모리 정리 및 통계 출력 (매 100프레임마다)
             if hasattr(_handleClient, 'frame_count'):
                 _handleClient.frame_count += 1
             else:
@@ -278,6 +293,7 @@ async def _handleClient(websocket):
             
             if _handleClient.frame_count % 100 == 0:
                 cleanup_gpu_memory()
+                print_gpu_stats()
 
             for det in detections:
                 det["risk"] = computeRisk(det, width)

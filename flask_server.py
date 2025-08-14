@@ -59,7 +59,7 @@ model.conf = 0.2   # 신뢰도 임계값 낮춤 (더 많은 객체 검출)
 model.iou = 0.4    # IoU 임계값 조정
 model.agnostic = False  # 클래스별 NMS
 model.multi_label = False  # 단일 라벨
-model.max_det = 500  # 최대 검출 개수 대폭 증가 (32GB 메모리 최대 활용)
+model.max_det = 100  # 안정적인 최대 검출 개수
 
 # GPU 메모리 최적화를 위한 추가 설정
 if device == 'cuda':
@@ -261,28 +261,30 @@ async def _handleClient(websocket):
             if img is None:
                 continue
 
-            # GPU 메모리 활용도를 높이기 위한 이미지 전처리
-            # 더 큰 해상도로 처리하여 GPU 메모리 사용량 증가
-            if img.shape[1] < 1280:  # 너비가 1280보다 작으면 확대
-                img = cv2.resize(img, (1280, 720))
+            # 해상도는 입력 그대로 사용 (업스케일 제거)
+            # if img.shape[1] < 1280:
+            #     img = cv2.resize(img, (1280, 720))
 
             # 배치 처리를 위한 최적화
-            results = model(img, verbose=False, device=device, half=True)  # FP16 사용으로 속도 향상
+            results = model(img, verbose=False, device=device, half=True)
             detections = []
             gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    conf = float(box.conf[0])
+                    try:
+                        conf = float(box.conf[0])
+                    except Exception:
+                        conf = 0.0
                     cls = int(box.cls[0])
                     label = model.names[cls]
 
-                    korean_label = label
+                    kor_label = label
                     det = {
                         "box": [x1, y1, x2, y2],
                         "confidence": conf,
                         "label": label,
-                        "koreanLabel": korean_label
+                        "kor_label": kor_label
                     }
                     if _isAbnormal(det):
                         if det["label"] == "bottle" and _isRecentBottle(det["box"]):
@@ -306,7 +308,7 @@ async def _handleClient(websocket):
 
                     detections.append(det)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(img, korean_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(img, kor_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
@@ -371,10 +373,13 @@ async def _handleClient(websocket):
                     ttsDebug = zoneCenter
             if ttsMsg:
                 print(f"{ttsMsg} / center : {ttsDebug}", flush=True)
-            await websocket.send(json.dumps({
-                "tts": ttsMsg,
-                "detections": detections
-            }))
+            try:
+                await websocket.send(json.dumps({
+                    "tts": ttsMsg,
+                    "detections": detections
+                }))
+            except Exception as e:
+                print(f"send error: {e}", flush=True)
 
     except websockets.exceptions.ConnectionClosed:
         pass

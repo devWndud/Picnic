@@ -37,6 +37,13 @@ WS_PORT = 8001
 IMG_SIZE = 960  # 1280 → 960로 지연과 품질 균형
 MAX_DET = 100
 
+# Annotated RTSP publish settings
+ANNOTATED_RTSP_ENABLE = True
+ANNOTATED_FPS = 30
+ANNOTATED_SIZE = (640, 360)  # match processing size
+ANNOTATED_BITRATE = '2M'
+ANNOTATED_URL_PREFIX = 'rtsp://127.0.0.1:8554/annotated'
+
 # ----------------------
 # GPU / Model setup
 # ----------------------
@@ -78,6 +85,100 @@ procLock = threading.Lock()
 # For WebSocket broadcasts
 ws_clients: "set[websockets.WebSocketServerProtocol]" = set()
 ws_lock = threading.Lock()
+
+# ----------------------
+# Annotated RTSP publisher
+# ----------------------
+class AnnotatedPublisher(threading.Thread):
+    def __init__(self, stream_id: int, size: tuple, fps: int, bitrate: str):
+        super().__init__(daemon=True)
+        self.stream_id = stream_id
+        self.size = size
+        self.fps = fps
+        self.bitrate = bitrate
+        self.running = True
+        self.proc = None
+        self.lock = threading.Lock()
+        self.latest: Optional[np.ndarray] = None
+
+    def start_ffmpeg(self):
+        url = f"{ANNOTATED_URL_PREFIX}{self.stream_id}"
+        w, h = self.size
+        cmd = [
+            'ffmpeg',
+            '-loglevel', 'error',
+            '-re',
+            '-f', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{w}x{h}',
+            '-r', str(self.fps),
+            '-i', '-',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-tune', 'zerolatency',
+            '-pix_fmt', 'yuv420p',
+            '-b:v', self.bitrate,
+            '-maxrate', self.bitrate,
+            '-bufsize', self.bitrate,
+            '-g', str(self.fps*2),
+            '-f', 'rtsp',
+            '-rtsp_transport', 'tcp',
+            url
+        ]
+        try:
+            import subprocess
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            print(f"[Annotated {self.stream_id}] ffmpeg started -> {url}")
+        except Exception as e:
+            print(f"[Annotated {self.stream_id}] ffmpeg start failed: {e}")
+            self.proc = None
+
+    def run(self):
+        self.start_ffmpeg()
+        frame_interval = 1.0 / max(1, self.fps)
+        next_deadline = time.perf_counter()
+        while self.running:
+            with self.lock:
+                frame = None if self.latest is None else self.latest.copy()
+            if frame is None:
+                time.sleep(0.005)
+                continue
+            # Ensure size
+            if (frame.shape[1], frame.shape[0]) != self.size:
+                frame = cv2.resize(frame, self.size)
+            if self.proc is None or self.proc.stdin is None or self.proc.poll() is not None:
+                self.start_ffmpeg()
+                time.sleep(0.2)
+                continue
+            try:
+                self.proc.stdin.write(frame.tobytes())
+            except Exception:
+                # restart ffmpeg on write failure
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+                self.proc = None
+            # pace
+            next_deadline += frame_interval
+            now = time.perf_counter()
+            if next_deadline > now:
+                time.sleep(next_deadline - now)
+            else:
+                next_deadline = now
+        # cleanup
+        if self.proc is not None:
+            try:
+                self.proc.stdin.close()
+                self.proc.terminate()
+            except Exception:
+                pass
+
+    def update(self, frame: np.ndarray):
+        with self.lock:
+            self.latest = frame
+
+publishers: Dict[int, AnnotatedPublisher] = {}
 
 # ----------------------
 # Flask app for MJPEG
@@ -238,6 +339,10 @@ class ProcessThread(threading.Thread):
         super().__init__(daemon=True)
         self.stream_id = stream_id
         self.running = True
+        if ANNOTATED_RTSP_ENABLE:
+            pub = AnnotatedPublisher(stream_id, ANNOTATED_SIZE, ANNOTATED_FPS, ANNOTATED_BITRATE)
+            publishers[stream_id] = pub
+            pub.start()
 
     def run(self):
         while self.running:
@@ -286,6 +391,12 @@ class ProcessThread(threading.Thread):
 
             with procLock:
                 processedFrames[self.stream_id] = img
+
+            # update annotated publisher
+            if ANNOTATED_RTSP_ENABLE:
+                pub = publishers.get(self.stream_id)
+                if pub is not None:
+                    pub.update(img)
 
             times = {
                 'infer_ms': round(infer_ms, 1),

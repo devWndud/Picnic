@@ -11,15 +11,8 @@ export CUDA_CACHE_DISABLE=0
 export CUDA_CACHE_PATH=/tmp/cuda_cache
 export CUDA_CACHE_MAXSIZE=2147483648  # 2GB 캐시
 
-# 2. GPU 메모리 최적화 환경 변수
+# 2. GPU 메모리 최적화 환경 변수 (안전한 버전)
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
-export PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8
-export PYTORCH_CUDA_ALLOC_CONF=roundup_power2_divisions:16
-export PYTORCH_CUDA_ALLOC_CONF=roundup_bypass_threshold_mb:128
-
-# 3. 메모리 할당 전략
-export PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # 4. cuDNN 최적화
 export CUDNN_BENCHMARK=1

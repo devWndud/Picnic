@@ -29,9 +29,8 @@ if device == 'cuda':
     # GPU 메모리 캐시 정리
     torch.cuda.empty_cache()
     
-    # 리눅스 환경에서 GPU 메모리 최대 활용 설정
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,garbage_collection_threshold:0.8,roundup_power2_divisions:16,roundup_bypass_threshold_mb:128,backend:cudaMallocAsync,expandable_segments:True'
-    os.environ['CUDA_MEMORY_POOL_SIZE'] = '26843545600'  # 25GB
+    # 리눅스 환경에서 GPU 메모리 최대 활용 설정 (안전한 버전)
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
     
     print(f"GPU: {torch.cuda.get_device_name()}")
     print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")

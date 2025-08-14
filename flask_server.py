@@ -14,6 +14,7 @@ from openai import OpenAI
 import sys
 import io
 import torch
+import os
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 

@@ -1,4 +1,3 @@
-
 import asyncio
 import websockets
 import threading
@@ -16,11 +15,12 @@ import io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-model = YOLO('yolov8x.pt')
+# YOLO 모델 GPU 로드 + FP16 적용
+model = YOLO('yolov8x.pt').to('cuda')
+model.model.half()  # Half precision
 
 latestFrames = {}
 frameLock = threading.Lock()
-
 recentBottleBoxes = []
 
 app = Flask(__name__)
@@ -28,7 +28,7 @@ app = Flask(__name__)
 def start_flask():
     app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
-OPENAI_API_KEY = "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"  # 여기에 본인 토큰만 입력하면 됨
+OPENAI_API_KEY = "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"
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 gpt_lock = threading.Lock()
@@ -55,7 +55,7 @@ def video_feed(uniqueCode):
             time.sleep(0.05)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def _isAbnormal(det, img_shape):
+def _isAbnormal(det):
     return det["label"] == "bottle"
 
 def _isRecentBottle(box):
@@ -67,41 +67,37 @@ def _isRecentBottle(box):
 
 def _askGptAboutBbox(label, box, croppedImg):
     if not gpt_lock.acquire(blocking=False):
-        print("[DEBUG] GPT Vision API가 이미 동작 중이므로 이번 요청은 건너뜁니다.")
         return "비정상"
     try:
-        import time
         start_time = time.time()
         _, buffer = cv2.imencode('.jpg', croppedImg)
         img_b64 = base64.b64encode(buffer).decode('utf-8')
         prompt = (
             f"이 이미지는 {label}의 바운딩박스({box})입니다."
-            f"바운딩박스 안에 실제로 {label}이 잘 인식되어 있나요? "
+            f"바운딩박스 안에 실제로 {label}이 잘 인식되어 있나요?"
             f"현재 저희는 bottle은 무조건 비정상객체로 정의하고 있습니다"
             f"'정상' 또는 '비정상'으로만 답해주세요."
         )
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img_b64}"
-                            }
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_b64}"
                         }
-                    ]
-                }
-            ],
+                    }
+                ]
+            }],
             max_tokens=10,
         )
-        elapsed = time.time() - start_time
         answer = response.choices[0].message.content
         return answer
-    except Exception as e:
+    except Exception:
         return "비정상"
     finally:
         gpt_lock.release()
@@ -111,9 +107,7 @@ width, height = 640, 360
 def computeRisk(det, frameWidth):
     risk = det.get("confidence", 0)
     label = det.get("label", "")
-
     x1, y1, x2, y2 = det["box"]
-
     boxArea = (x2 - x1) * (y2 - y1)
     minPersonArea = 30000
 
@@ -128,7 +122,6 @@ def computeRisk(det, frameWidth):
         risk += 0.3
 
     dangerLabels = ["car", "person", "motorcycle", "bus", "truck", "bicycle"]
-
     if label.lower() in dangerLabels:
         risk += 0.3
 
@@ -141,14 +134,12 @@ def _getObstacleZone(detections, frameWidth):
     left = frameWidth / 3
     centerLeft = left + (left / 2)
     centerRight = 2 * left + (left / 2)
-
     right = frameWidth
     zones = []
 
     for det in detections:
         label = det.get("label", "")
         x1, y1, x2, y2 = det["box"]
-
         boxArea = (x2 - x1) * (y2 - y1)
         risk = det.get("risk", det.get("confidence", 0))
 
@@ -160,10 +151,8 @@ def _getObstacleZone(detections, frameWidth):
             continue
 
         boxCenter = (x1 + x2) / 2
-
         if boxCenter < left:
             zones.append("left")
-
         elif left <= boxCenter < centerLeft:
             zones.append("centerLeft")
         elif centerLeft <= boxCenter < 2*left:
@@ -183,40 +172,47 @@ async def _handleClient(websocket):
 
             imgBytes = bytes(data["img"])
             img = cv2.imdecode(np.frombuffer(imgBytes, np.uint8), cv2.IMREAD_COLOR)
-
             if img is None:
                 continue
 
-            results = model(img, verbose=False)
+            # YOLO 최적화 전처리
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img_rgb = img_rgb.astype(np.float16) / 255.0
+
+            results = model.predict(
+                img_rgb,
+                imgsz=640,
+                conf=0.25,
+                device=0,
+                half=True,
+                verbose=False
+            )
+
             detections = []
-            gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
+            gptCalledThisFrame = False
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     conf = float(box.conf[0])
                     cls = int(box.cls[0])
                     label = model.names[cls]
-                    korean_label = label
                     det = {
                         "box": [x1, y1, x2, y2],
                         "confidence": conf,
                         "label": label,
-                        "koreanLabel": korean_label
+                        "koreanLabel": label
                     }
-                    if _isAbnormal(det, img.shape):
+                    if _isAbnormal(det):
                         if det["label"] == "bottle" and _isRecentBottle(det["box"]):
                             det["abnormal"] = False
-
                         elif det["label"] == "bottle" and not gptCalledThisFrame:
                             det["abnormal"] = True
                             recentBottleBoxes.append((det["box"], time.time()))
                             croppedImg = img[y1:y2, x1:x2]
                             gpt_result = _askGptAboutBbox(label, [x1, y1, x2, y2], croppedImg)
                             print(f"GPT : {gpt_result}", flush=True)
-
                             if "정상" in gpt_result:
                                 det["abnormal"] = False
-                                
                             gptCalledThisFrame = True
                         else:
                             det["abnormal"] = False
@@ -225,7 +221,8 @@ async def _handleClient(websocket):
 
                     detections.append(det)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(img, korean_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(img, label, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
@@ -250,10 +247,8 @@ async def _handleClient(websocket):
 
                     if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
                         continue
-
                     if label == "person" and boxArea < 30000:
                         continue
-
                     if risk < 0.5:
                         continue
 
@@ -270,8 +265,10 @@ async def _handleClient(websocket):
                 elif "centerLeft" in zones or "centerRight" in zones:
                     ttsMsg = "잠시 정지하세요"
                     ttsDebug = zoneCenter
+
             if ttsMsg:
                 print(f"{ttsMsg} / center : {ttsDebug}", flush=True)
+
             await websocket.send(json.dumps({
                 "tts": ttsMsg,
                 "detections": detections

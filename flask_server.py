@@ -254,14 +254,12 @@ async def _handleClient(websocket):
     try:
         while True:
             t_recv = time.perf_counter()
-            server_recv_ts = time.time()
             msg = await websocket.recv()
             t_after_recv = time.perf_counter()
             data = json.loads(msg)
 
             cam_idx = data.get("cam_idx", 0)
             uniqueCode = data.get("uniqueCode", "default")
-            client_ts = data.get("client_ts")
 
             # Base64 이미지 디코딩 지원
             if "img_b64" in data:
@@ -336,23 +334,15 @@ async def _handleClient(websocket):
             zones = _getObstacleZone(detections, frameWidth)
 
             recv_to_infer_ms = (t_infer0 - t_after_recv) * 1000
-            server_total_ms = (time.perf_counter() - t_recv) * 1000
-
-            # 클라이언트->서버 지연은 서버 수신 시각과 클라 송신 시각 차이 사용
-            client_to_server_ms = None
-            if client_ts is not None:
-                try:
-                    client_to_server_ms = (server_recv_ts - float(client_ts)) * 1000.0
-                except Exception:
-                    client_to_server_ms = None
+            # 서버 처리 시간(수신 완료 -> 응답 직전)
+            proc_ms = (time.perf_counter() - t_after_recv) * 1000
 
             times = {
                 "recv_to_infer_ms": round(recv_to_infer_ms, 1),
                 "decode_ms": round(decode_ms, 1),
                 "infer_ms": round(infer_ms, 1),
                 "post_ms": round(post_ms, 1),
-                "server_total_ms": round(server_total_ms, 1),
-                "client_to_server_ms": round(client_to_server_ms, 1) if client_to_server_ms is not None else None,
+                "proc_ms": round(proc_ms, 1),
             }
             print(f"[Server cam {cam_idx}] times={times}")
 

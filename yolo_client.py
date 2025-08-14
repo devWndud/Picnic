@@ -107,6 +107,12 @@ async def _sendFrames(video, video_idx, total_videos):
 
     uniqueCode = 'A7X2bQ9cLmY1'
 
+    # 적응형 전송률 변수
+    target_fps = 15.0
+    min_fps, max_fps = 5.0, 30.0
+    jpeg_quality = 70
+    min_q, max_q = 40, 85
+
     async with websockets.connect(f'ws://{ip}:8000', max_size=10*1024*1024) as ws:
         while not stop_event.is_set():
             if not video.ret or video.frame is None:
@@ -118,7 +124,7 @@ async def _sendFrames(video, video_idx, total_videos):
             frame = cv2.resize(frame, (640, 360))
 
             t1 = time.perf_counter()
-            ok, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            ok, img = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)])
             if not ok:
                 continue
             img_b64 = base64.b64encode(img).decode('ascii')
@@ -161,13 +167,19 @@ async def _sendFrames(video, video_idx, total_videos):
             recv_to_infer_ms = server_times.get("recv_to_infer_ms")
             infer_ms = server_times.get("infer_ms")
             post_ms = server_times.get("post_ms")
-            server_total_ms = server_times.get("server_total_ms")
-            client_to_server_ms = server_times.get("client_to_server_ms")
+            proc_ms = server_times.get("proc_ms")
+
+            net_ms = None
+            if proc_ms is not None:
+                try:
+                    net_ms = max(0.0, rtt_ms - float(proc_ms))
+                except Exception:
+                    net_ms = None
 
             # 오버레이 텍스트
             overlay_lines = [
-                f"enc {encode_ms:.1f}ms | send {send_ms:.1f}ms | rtt {rtt_ms:.1f}ms | total {total_cycle_ms:.1f}ms",
-                f"srv: recv->infer {recv_to_infer_ms}ms | infer {infer_ms}ms | post {post_ms}ms | total {server_total_ms}ms | c2s {client_to_server_ms}ms"
+                f"enc {encode_ms:.1f}ms | send {send_ms:.1f}ms | rtt {rtt_ms:.1f}ms | net~ {net_ms if net_ms is not None else 'NA'} | total {total_cycle_ms:.1f}ms",
+                f"srv: recv->infer {recv_to_infer_ms}ms | infer {infer_ms}ms | post {post_ms}ms | proc {proc_ms}ms | fps {target_fps:.1f} q {jpeg_quality}"
             ]
             y = 20
             for line in overlay_lines:
@@ -177,9 +189,30 @@ async def _sendFrames(video, video_idx, total_videos):
             with shared['lock']:
                 shared['latest_frame'] = frame
 
-            print(f"[Client {video_idx}] enc={encode_ms:.1f}ms send={send_ms:.1f}ms rtt={rtt_ms:.1f}ms total={total_cycle_ms:.1f}ms | server recv->infer={recv_to_infer_ms}ms infer={infer_ms}ms post={post_ms}ms total={server_total_ms}ms c2s={client_to_server_ms}ms")
+            print(f"[Client {video_idx}] enc={encode_ms:.1f}ms send={send_ms:.1f}ms rtt={rtt_ms:.1f}ms net~={net_ms if net_ms is not None else 'NA'} total={total_cycle_ms:.1f}ms | server recv->infer={recv_to_infer_ms}ms infer={infer_ms}ms post={post_ms}ms proc={proc_ms}ms | fps={target_fps:.1f} q={jpeg_quality}")
 
-    stop_event.set()
+            # 적응형 조절 (간단한 AIMD 스타일)
+            # 목표: rtt <= 300ms, proc <= 200ms 근처 유지
+            try:
+                too_slow = (rtt_ms is not None and rtt_ms > 300) or (proc_ms is not None and proc_ms > 200)
+                very_slow = (rtt_ms is not None and rtt_ms > 600) or (proc_ms is not None and proc_ms > 400)
+                if very_slow:
+                    target_fps = max(min_fps, target_fps * 0.8)
+                    jpeg_quality = max(min_q, jpeg_quality - 5)
+                elif too_slow:
+                    target_fps = max(min_fps, target_fps - 1.0)
+                    jpeg_quality = max(min_q, jpeg_quality - 2)
+                else:
+                    target_fps = min(max_fps, target_fps + 0.5)
+                    jpeg_quality = min(max_q, jpeg_quality + 1)
+            except Exception:
+                pass
+
+            # 프레임 속도 제한
+            target_interval_ms = 1000.0 / max(min_fps, min(max_fps, target_fps))
+            sleep_ms = max(0.0, target_interval_ms - total_cycle_ms)
+            if sleep_ms > 0:
+                await asyncio.sleep(sleep_ms / 1000.0)
 
 async def main(max_videos=None):
     video_paths = _findVideoFiles(max_videos)

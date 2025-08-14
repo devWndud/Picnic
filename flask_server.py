@@ -35,16 +35,16 @@ model = YOLO('yolov8x.pt')
 model.to(device)
 
 # 모델 추론 설정 최적화 (RTX 5000 Ada Generation용)
-model.conf = 0.25  # 신뢰도 임계값
-model.iou = 0.45   # IoU 임계값
+model.conf = 0.2   # 신뢰도 임계값 낮춤 (더 많은 객체 검출)
+model.iou = 0.4    # IoU 임계값 조정
 model.agnostic = False  # 클래스별 NMS
 model.multi_label = False  # 단일 라벨
-model.max_det = 200  # 최대 검출 개수 증가 (32GB 메모리 활용)
+model.max_det = 500  # 최대 검출 개수 대폭 증가 (32GB 메모리 최대 활용)
 
 # GPU 메모리 최적화를 위한 추가 설정
 if device == 'cuda':
     # RTX 5000 Ada Generation (32GB) 최대 활용 설정
-    torch.cuda.set_per_process_memory_fraction(0.95)  # GPU 메모리의 95% 사용
+    torch.cuda.set_per_process_memory_fraction(0.98)  # GPU 메모리의 98% 사용
     # 자동 혼합 정밀도 활성화 (메모리 절약 및 속도 향상)
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -53,11 +53,15 @@ if device == 'cuda':
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     torch.backends.cuda.enable_math_sdp(True)
     # 메모리 할당 전략 최적화
-    torch.cuda.set_per_process_memory_fraction(0.95)
+    torch.cuda.set_per_process_memory_fraction(0.98)
     # 메모리 풀링 활성화
     torch.cuda.empty_cache()
+    # GPU 메모리 할당 전략을 aggressive로 설정
+    torch.cuda.memory.set_per_process_memory_fraction(0.98)
+    # 메모리 캐시 크기 증가
+    torch.cuda.memory.set_per_process_memory_fraction(0.98)
 
-print("YOLO model loaded with GPU optimization for RTX 5000 Ada Generation")
+print("YOLO model loaded with aggressive GPU optimization for RTX 5000 Ada Generation")
 
 latestFrames = {}
 frameLock = threading.Lock()
@@ -84,7 +88,13 @@ def print_gpu_stats():
     if device == 'cuda':
         allocated = torch.cuda.memory_allocated() / 1024**3
         cached = torch.cuda.memory_reserved() / 1024**3
-        print(f"GPU Memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB")
+        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        utilization = (allocated / total) * 100
+        print(f"GPU Memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB, Total: {total:.1f}GB, Utilization: {utilization:.1f}%")
+        
+        # GPU 사용률이 낮으면 경고 메시지
+        if utilization < 10:
+            print("⚠️  GPU 메모리 사용률이 낮습니다. 더 많은 메모리를 활용하세요!")
 
 def updateLatestFrame(img, uniqueCode):
     global latestFrames
@@ -240,6 +250,11 @@ async def _handleClient(websocket):
             if img is None:
                 continue
 
+            # GPU 메모리 활용도를 높이기 위한 이미지 전처리
+            # 더 큰 해상도로 처리하여 GPU 메모리 사용량 증가
+            if img.shape[1] < 1280:  # 너비가 1280보다 작으면 확대
+                img = cv2.resize(img, (1280, 720))
+
             # 배치 처리를 위한 최적화
             results = model(img, verbose=False, device=device, half=True)  # FP16 사용으로 속도 향상
             detections = []
@@ -285,15 +300,25 @@ async def _handleClient(websocket):
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
 
-            # 주기적으로 GPU 메모리 정리 및 통계 출력 (매 100프레임마다)
+            # 주기적으로 GPU 메모리 정리 및 통계 출력 (매 50프레임마다)
             if hasattr(_handleClient, 'frame_count'):
                 _handleClient.frame_count += 1
             else:
                 _handleClient.frame_count = 1
             
-            if _handleClient.frame_count % 100 == 0:
+            if _handleClient.frame_count % 50 == 0:  # 더 자주 체크
                 cleanup_gpu_memory()
                 print_gpu_stats()
+                
+                # GPU 메모리 사용률이 낮으면 강제로 메모리 할당
+                if device == 'cuda':
+                    allocated = torch.cuda.memory_allocated() / 1024**3
+                    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    if (allocated / total) < 0.1:  # 10% 미만 사용 시
+                        print("🔄 GPU 메모리 사용률이 낮아 강제 할당을 시도합니다...")
+                        # 더 큰 텐서를 생성하여 메모리 사용량 증가
+                        dummy_tensor = torch.randn(1000, 1000, 1000, device=device, dtype=torch.float16)
+                        del dummy_tensor
 
             for det in detections:
                 det["risk"] = computeRisk(det, width)

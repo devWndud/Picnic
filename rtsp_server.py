@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 import cv2
 import numpy as np
 import websockets
-from flask import Flask, Response
+from flask import Flask, Response, request
 from ultralytics import YOLO
 import torch
 
@@ -86,20 +86,54 @@ app = Flask(__name__)
 
 @app.route('/video_feed/<int:stream_id>')
 def video_feed(stream_id: int):
+    # Query params: w (width), q (jpeg quality), fps
+    try:
+        tgt_w = int(request.args.get('w', '0'))
+    except Exception:
+        tgt_w = 0
+    try:
+        jpeg_q = int(request.args.get('q', '70'))
+    except Exception:
+        jpeg_q = 70
+    try:
+        fps = float(request.args.get('fps', '15'))
+    except Exception:
+        fps = 15.0
+    fps = max(1.0, min(60.0, fps))
+    frame_interval = 1.0 / fps
+
     def generate():
+        next_deadline = time.perf_counter()
         while True:
             with procLock:
                 frame = processedFrames.get(stream_id)
-                if frame is None:
-                    time.sleep(0.02)
-                    continue
-                ok, jpeg = cv2.imencode('.jpg', frame)
-                if not ok:
-                    continue
-                frame_bytes = jpeg.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.03)
+            if frame is None:
+                time.sleep(0.005)
+                continue
+
+            out = frame
+            if tgt_w and frame.shape[1] != tgt_w:
+                h = int(frame.shape[0] * (tgt_w / frame.shape[1]))
+                out = cv2.resize(frame, (tgt_w, h))
+
+            ok, jpeg = cv2.imencode('.jpg', out, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_q)])
+            if not ok:
+                continue
+            frame_bytes = jpeg.tobytes()
+            headers = (
+                b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n'
+                b'Content-Length: ' + str(len(frame_bytes)).encode('ascii') + b'\r\n\r\n'
+            )
+            yield headers + frame_bytes + b'\r\n'
+
+            # pace
+            next_deadline += frame_interval
+            now = time.perf_counter()
+            if next_deadline > now:
+                time.sleep(next_deadline - now)
+            else:
+                next_deadline = now
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 # ----------------------

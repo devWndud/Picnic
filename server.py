@@ -13,70 +13,10 @@ import requests
 from openai import OpenAI
 import sys
 import io
-import torch
-import os
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# GPU 설정 최적화
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f"Using device: {device}")
-
-if device == 'cuda':
-    # GPU 메모리 최적화 설정
-    torch.backends.cudnn.benchmark = True
-    torch.backends.cudnn.deterministic = False
-    # GPU 메모리 캐시 정리
-    torch.cuda.empty_cache()
-    
-    # 리눅스 환경에서 GPU 메모리 최대 활용 설정 (안전한 버전)
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
-    
-    print(f"GPU: {torch.cuda.get_device_name()}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    
-    # GPU 메모리 할당 전략 (보수적 설정)
-    torch.cuda.set_per_process_memory_fraction(0.85)  # 85%로 제한
-
-# YOLO 모델을 GPU에서 실행하도록 설정
 model = YOLO('yolov8x.pt')
-model.to(device)
-try:
-    model.fuse()
-except Exception:
-    pass
-
-# GPU 메모리 상태 확인
-if device == 'cuda':
-    allocated = torch.cuda.memory_allocated() / 1024**3
-    total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    print(f"현재 GPU 메모리 사용량: {allocated:.2f}GB / {total:.1f}GB")
-    
-    # 메모리가 이미 많이 사용 중이면 경고
-    if allocated > total * 0.8:
-        print("⚠️  GPU 메모리가 이미 많이 사용 중입니다. 기존 메모리를 정리합니다.")
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-# 모델 추론 설정 최적화 (RTX 5000 Ada Generation용)
-model.conf = 0.2   # 신뢰도 임계값 낮춤 (더 많은 객체 검출)
-model.iou = 0.4    # IoU 임계값 조정
-model.agnostic = False  # 클래스별 NMS
-model.multi_label = False  # 단일 라벨
-model.max_det = 100  # 안정적인 최대 검출 개수
-
-# GPU 메모리 최적화를 위한 추가 설정
-if device == 'cuda':
-    # RTX 5000 Ada Generation (32GB) 안전한 활용 설정
-    # 자동 혼합 정밀도 활성화 (메모리 절약 및 속도 향상)
-    torch.backends.cudnn.allow_tf32 = True
-    torch.backends.cuda.matmul.allow_tf32 = True
-    # CUDA 그래프 최적화 활성화
-    torch.backends.cuda.enable_flash_sdp(True)
-    torch.backends.cuda.enable_mem_efficient_sdp(True)
-    torch.backends.cuda.enable_math_sdp(True)
-
-print("YOLO model loaded with safe GPU optimization for RTX 5000 Ada Generation")
 
 latestFrames = {}
 frameLock = threading.Lock()
@@ -92,24 +32,6 @@ OPENAI_API_KEY = "sk-proj-UxI38o7n08djg-eOeSfu-5T-F1lg2siOx-xGmRxrgHWhXAapPWj_pz
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 gpt_lock = threading.Lock()
-
-# GPU 메모리 관리 함수
-def cleanup_gpu_memory():
-    if device == 'cuda':
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-def print_gpu_stats():
-    if device == 'cuda':
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        cached = torch.cuda.memory_reserved() / 1024**3
-        total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        utilization = (allocated / total) * 100
-        print(f"GPU Memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB, Total: {total:.1f}GB, Utilization: {utilization:.1f}%")
-        
-        # GPU 사용률이 낮으면 경고 메시지
-        if utilization < 10:
-            print("⚠️  GPU 메모리 사용률이 낮습니다. 더 많은 메모리를 활용하세요!")
 
 def updateLatestFrame(img, uniqueCode):
     global latestFrames
@@ -133,7 +55,7 @@ def video_feed(uniqueCode):
             time.sleep(0.05)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-def _isAbnormal(det):
+def _isAbnormal(det, img_shape):
     return det["label"] == "bottle"
 
 def _isRecentBottle(box):
@@ -145,6 +67,7 @@ def _isRecentBottle(box):
 
 def _askGptAboutBbox(label, box, croppedImg):
     if not gpt_lock.acquire(blocking=False):
+        print("[DEBUG] GPT Vision API가 이미 동작 중이므로 이번 요청은 건너뜁니다.")
         return "비정상"
     try:
         import time
@@ -153,11 +76,10 @@ def _askGptAboutBbox(label, box, croppedImg):
         img_b64 = base64.b64encode(buffer).decode('utf-8')
         prompt = (
             f"이 이미지는 {label}의 바운딩박스({box})입니다."
-            f"바운딩박스 안에 실제로 {label}이 잘 인식되어 있나요?"
+            f"바운딩박스 안에 실제로 {label}이 잘 인식되어 있나요? "
             f"현재 저희는 bottle은 무조건 비정상객체로 정의하고 있습니다"
             f"'정상' 또는 '비정상'으로만 답해주세요."
         )
-        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -253,103 +175,70 @@ def _getObstacleZone(detections, frameWidth):
 async def _handleClient(websocket):
     try:
         while True:
-            t_recv = time.perf_counter()
             msg = await websocket.recv()
-            t_after_recv = time.perf_counter()
             data = json.loads(msg)
 
             cam_idx = data.get("cam_idx", 0)
             uniqueCode = data.get("uniqueCode", "default")
 
-            # Base64 이미지 디코딩 지원
-            if "img_b64" in data:
-                imgBytes = base64.b64decode(data["img_b64"])  # type: ignore
-            else:
-                imgBytes = bytes(data["img"])  # 하위호환
-
-            t_decode0 = time.perf_counter()
+            imgBytes = bytes(data["img"])
             img = cv2.imdecode(np.frombuffer(imgBytes, np.uint8), cv2.IMREAD_COLOR)
-            t_decode1 = time.perf_counter()
-            decode_ms = (t_decode1 - t_decode0) * 1000
 
             if img is None:
                 continue
 
-            # 추론
-            t_infer0 = time.perf_counter()
-            with torch.inference_mode():
-                results = model(img, verbose=False, device=device, half=True, imgsz=1280)
-            t_infer1 = time.perf_counter()
-            infer_ms = (t_infer1 - t_infer0) * 1000
-
+            results = model(img, verbose=False)
             detections = []
-            gptCalledThisFrame = False
-
-            t_post0 = time.perf_counter()
+            gptCalledThisFrame = False  # 한 프레임에 한 번만 GPT 호출
             for r in results:
                 for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    try:
-                        conf = float(box.conf[0])
-                    except Exception:
-                        conf = 0.0
+                    conf = float(box.conf[0])
                     cls = int(box.cls[0])
                     label = model.names[cls]
-
-                    kor_label = label
+                    korean_label = label
                     det = {
                         "box": [x1, y1, x2, y2],
                         "confidence": conf,
                         "label": label,
-                        "kor_label": kor_label
+                        "koreanLabel": korean_label
                     }
-                    if _isAbnormal(det):
+                    if _isAbnormal(det, img.shape):
                         if det["label"] == "bottle" and _isRecentBottle(det["box"]):
                             det["abnormal"] = False
+
                         elif det["label"] == "bottle" and not gptCalledThisFrame:
                             det["abnormal"] = True
                             recentBottleBoxes.append((det["box"], time.time()))
                             croppedImg = img[y1:y2, x1:x2]
                             gpt_result = _askGptAboutBbox(label, [x1, y1, x2, y2], croppedImg)
+                            print(f"GPT : {gpt_result}", flush=True)
+
                             if "정상" in gpt_result:
                                 det["abnormal"] = False
+                                
                             gptCalledThisFrame = True
                         else:
                             det["abnormal"] = False
                     else:
                         det["abnormal"] = False
+
                     detections.append(det)
                     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(img, kor_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            t_post1 = time.perf_counter()
-            post_ms = (t_post1 - t_post0) * 1000
+                    cv2.putText(img, korean_label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             if cam_idx == 0:
                 updateLatestFrame(img, uniqueCode)
 
-            frameWidth = int(img.shape[1])
             for det in detections:
-                det["risk"] = computeRisk(det, frameWidth)
+                det["risk"] = computeRisk(det, width)
 
-            zones = _getObstacleZone(detections, frameWidth)
-
-            recv_to_infer_ms = (t_infer0 - t_after_recv) * 1000
-            # 서버 처리 시간(수신 완료 -> 응답 직전)
-            proc_ms = (time.perf_counter() - t_after_recv) * 1000
-
-            times = {
-                "recv_to_infer_ms": round(recv_to_infer_ms, 1),
-                "decode_ms": round(decode_ms, 1),
-                "infer_ms": round(infer_ms, 1),
-                "post_ms": round(post_ms, 1),
-                "proc_ms": round(proc_ms, 1),
-            }
-            print(f"[Server cam {cam_idx}] times={times}")
-
+            zones = _getObstacleZone(detections, width)
             ttsMsg = ""
             ttsDebug = None
             zoneCenter = None
             _abnormalDetected = any(det.get("label", "") == "bottle" for det in detections)
+
             if _abnormalDetected:
                 ttsMsg = "비정상 객체가 인식되었습니다"
             else:
@@ -358,15 +247,20 @@ async def _handleClient(websocket):
                     x1, y1, x2, y2 = det["box"]
                     boxArea = (x2 - x1) * (y2 - y1)
                     risk = det.get("risk", det.get("confidence", 0))
+
                     if label.lower() not in ["car", "person", "motorcycle", "bus", "truck", "bicycle"]:
                         continue
+
                     if label == "person" and boxArea < 30000:
                         continue
+
                     if risk < 0.5:
                         continue
+
                     boxCenter = (x1 + x2) / 2
                     zoneCenter = boxCenter
                     break
+
                 if "left" in zones:
                     ttsMsg = "오른쪽으로 가세요."
                     ttsDebug = zoneCenter
@@ -378,20 +272,16 @@ async def _handleClient(websocket):
                     ttsDebug = zoneCenter
             if ttsMsg:
                 print(f"{ttsMsg} / center : {ttsDebug}", flush=True)
-            try:
-                await websocket.send(json.dumps({
-                    "tts": ttsMsg,
-                    "detections": detections,
-                    "times": times
-                }))
-            except Exception as e:
-                print(f"send error: {e}", flush=True)
+            await websocket.send(json.dumps({
+                "tts": ttsMsg,
+                "detections": detections
+            }))
 
     except websockets.exceptions.ConnectionClosed:
         pass
 
 async def start_websocket_server():
-    async with websockets.serve(_handleClient, "0.0.0.0", 8000, max_size=10*1024*1024):
+    async with websockets.serve(_handleClient, "0.0.0.0", 8000):
         print("WebSocket server started on ws://0.0.0.0:8000")
         await asyncio.Future()
 

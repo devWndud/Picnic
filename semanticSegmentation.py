@@ -83,7 +83,7 @@ def run_od_ss(image_path):
     }
     for target in SS_TARGETS:
         mask = (seg_mask_resized == target)
-        ss_img[mask] = cv2.addWeighted(ss_img[mask], 0.5, np.array(color_map[target]), 0.5, 0)
+        ss_img[mask] = (ss_img[mask] * 0.5 + np.array(color_map[target]) * 0.5).astype(np.uint8)
 
     # OD + SS 결과 합성
     result_img = cv2.addWeighted(od_img, 0.7, ss_img, 0.3, 0)

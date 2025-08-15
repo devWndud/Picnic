@@ -72,6 +72,8 @@ def run_od_ss(image_path):
     with torch.no_grad():
         output = ss_model(input_tensor)['out'][0]
     seg_mask = output.argmax(0).cpu().numpy()
+    # seg_mask를 원본 이미지 크기로 리사이즈
+    seg_mask_resized = cv2.resize(seg_mask.astype(np.uint8), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
 
     # Segmentation 결과 시각화
     ss_img = img.copy()
@@ -80,7 +82,7 @@ def run_od_ss(image_path):
         156: (255, 0, 0),   # staircase - 파랑
     }
     for target in SS_TARGETS:
-        mask = (seg_mask == target)
+        mask = (seg_mask_resized == target)
         ss_img[mask] = cv2.addWeighted(ss_img[mask], 0.5, np.array(color_map[target]), 0.5, 0)
 
     # OD + SS 결과 합성

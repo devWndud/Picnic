@@ -102,8 +102,7 @@ if __name__ == "__main__":
         def start_websocket_server():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            server = websockets.serve(handle_ws, "0.0.0.0", 8000)
-            loop.run_until_complete(server)
+            server = loop.run_until_complete(websockets.serve(handle_ws, "0.0.0.0", 8000))
             loop.run_forever()
         websocket_thread = threading.Thread(target=start_websocket_server, daemon=True)
         websocket_thread.start()

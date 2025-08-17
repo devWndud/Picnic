@@ -57,7 +57,11 @@ def handle_client(conn, addr):
             # YOLO 처리
             results = model(frame, imgsz=640, verbose=False)
             annotated_frame = results[0].plot()
-            objects = [(cls.name, float(cls.conf)) for cls in results[0].boxes]
+            boxes = results[0].boxes
+            class_ids = boxes.cls.cpu().numpy().astype(int)
+            confidences = boxes.conf.cpu().numpy()
+            names = results[0].names if hasattr(results[0], "names") else model.names
+            objects = [(names[class_id], float(conf)) for class_id, conf in zip(class_ids, confidences)]
 
             # 결과 텍스트 클라이언트 전송
             text = "; ".join([f"{name}:{conf:.2f}" for name, conf in objects])

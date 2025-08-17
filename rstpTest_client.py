@@ -1,6 +1,7 @@
 import socket
 import cv2
 import struct
+import time
 
 SERVER_IP = "222.231.24.5"
 SERVER_PORT = 9999
@@ -27,6 +28,7 @@ def send_video(video_path, client_id):
             break
 
         # 전송
+        send_start_time = time.time()
         _, buffer = cv2.imencode(".jpg", frame)
         data = buffer.tobytes()
         sock.sendall(struct.pack(">I", len(data)) + data)
@@ -37,8 +39,10 @@ def send_video(video_path, client_id):
             break
         msg_len = struct.unpack(">I", raw_len)[0]
         text_data = recv_all(sock, msg_len)
+        send_end_time = time.time()
         text = text_data.decode()
         print(f"[Client {client_id}] Detected: {text}")
+        print(f"[CLIENT DEBUG] Frame round-trip time: {(send_end_time - send_start_time)*1000:.2f} ms")
 
     cap.release()
     sock.close()

@@ -46,6 +46,7 @@ def handle_client(conn, addr):
     print(f"[SERVER] Connected by {addr}")
     try:
         while True:
+            frame_start_time = time.time()  # Start timing for the whole frame
             raw_len = recvall(conn, 4)
             if not raw_len:
                 break
@@ -55,7 +56,9 @@ def handle_client(conn, addr):
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
             # YOLO 처리
+            yolo_start_time = time.time()
             results = model(frame, imgsz=640, verbose=False)
+            yolo_end_time = time.time()
             annotated_frame = results[0].plot()
             boxes = results[0].boxes
             class_ids = boxes.cls.cpu().numpy().astype(int)
@@ -72,6 +75,9 @@ def handle_client(conn, addr):
             with lock:
                 output_frame = annotated_frame
 
+            frame_end_time = time.time()
+            print(f"[SERVER DEBUG] Frame total time: {(frame_end_time - frame_start_time)*1000:.2f} ms, YOLO time: {(yolo_end_time - yolo_start_time)*1000:.2f} ms")
+
     except Exception as e:
         print(f"[SERVER ERROR] {e}")
     finally:
@@ -87,6 +93,10 @@ def start_tcp_server(host="0.0.0.0", port=9999):
         conn, addr = server_socket.accept()
         threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
-if __name__ == "__main__":
+def start_background_tcp_server():
     threading.Thread(target=start_tcp_server, daemon=True).start()
+
+start_background_tcp_server()
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, threaded=True)

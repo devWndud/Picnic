@@ -118,7 +118,7 @@ async def _sendFrames(cam, cam_idx, total_cams):
             result = await ws.recv()
             result_dict = json.loads(result)
 
-            if cam_idx == 0 and "tts" in result_dict:
+            if cam_idx == 0 and "tts" in result_dict: 
                 ttsMsg = result_dict["tts"]
                 now = time.time()
                 if ttsMsg:

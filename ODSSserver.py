@@ -6,6 +6,7 @@ from ultralytics import YOLO
 import torch
 from torchvision import transforms
 from torchvision.models.segmentation import deeplabv3_resnet50
+from tempfile import NamedTemporaryFile
 
 app = Flask(__name__)
 
@@ -70,6 +71,35 @@ def process():
     result_img = od_ss_process(img)
     _, img_encoded = cv2.imencode('.jpg', result_img)
     return send_file(io.BytesIO(img_encoded.tobytes()), mimetype='image/jpeg')
+
+@app.route('/process_video', methods=['POST'])
+def process_video():
+    if 'video' not in request.files:
+        return 'No video uploaded', 400
+    file = request.files['video']
+    # 임시 파일로 저장
+    with NamedTemporaryFile(delete=False, suffix='.mp4') as temp_in:
+        temp_in.write(file.read())
+        temp_in_path = temp_in.name
+    cap = cv2.VideoCapture(temp_in_path)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    with NamedTemporaryFile(delete=False, suffix='.mp4') as temp_out:
+        out = cv2.VideoWriter(temp_out.name, fourcc, fps, (width, height))
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            result_frame = od_ss_process(frame)
+            out.write(result_frame)
+        cap.release()
+        out.release()
+        temp_out_path = temp_out.name
+    # 결과 파일 전송
+    with open(temp_out_path, 'rb') as f:
+        return send_file(io.BytesIO(f.read()), mimetype='video/mp4')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=False)

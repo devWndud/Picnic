@@ -7,6 +7,11 @@ from flask import Flask, Response
 import threading
 import json
 import time
+import imageio.v3 as iio
+import sys
+
+MODE = "webp"  # 'webp' or 'h264'
+UDP_PORT = 5000
 
 model = YOLO("yolov8x.pt")
 output_frame = None
@@ -37,12 +42,17 @@ async def handle_ws(websocket):
         while True:
             msg = await websocket.recv()
             data = json.loads(msg)
-            img_bytes = bytes(data["img"])
-            frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-            if frame is None:
-                continue
+            if data.get("end"):
+                break
+            encoding = data.get("encoding", "webp")
+            frame_id = data.get("frame_id")
+            if encoding == "webp":
+                img_bytes = bytes(data["img"])
+                frame = iio.imread(img_bytes, plugin="pillow")
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                continue  # Only handle webp in ws mode
             frame_start_time = time.time()
-            # YOLO 처리
             yolo_start_time = time.time()
             results = model(frame, imgsz=640, verbose=False)
             yolo_end_time = time.time()
@@ -52,13 +62,11 @@ async def handle_ws(websocket):
             confidences = boxes.conf.cpu().numpy()
             names = results[0].names if hasattr(results[0], "names") else model.names
             objects = [(names[class_id], float(conf)) for class_id, conf in zip(class_ids, confidences)]
-            # 결과 JSON 전송
             det_list = [
                 {"label": name, "confidence": conf}
                 for name, conf in objects
             ]
-            await websocket.send(json.dumps({"detections": det_list}))
-            # 웹 스트림용 전역 변수 업데이트
+            await websocket.send(json.dumps({"detections": det_list, "frame_id": frame_id}))
             with lock:
                 output_frame = annotated_frame
             frame_end_time = time.time()
@@ -66,10 +74,23 @@ async def handle_ws(websocket):
     except websockets.exceptions.ConnectionClosed:
         print("[SERVER] WebSocket connection closed")
 
-async def start_ws_server():
-    async with websockets.serve(handle_ws, "0.0.0.0", 8000):
-        print("[SERVER] WebSocket listening on ws://0.0.0.0:8000")
-        await asyncio.Future()
+def udp_h264_receiver():
+    global output_frame, lock
+    cap = cv2.VideoCapture(f'udpsrc port={UDP_PORT} ! application/x-rtp, encoding-name=H264 ! rtph264depay ! avdec_h264 ! videoconvert ! appsink', cv2.CAP_GSTREAMER)
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        frame_start_time = time.time()
+        yolo_start_time = time.time()
+        results = model(frame, imgsz=640, verbose=False)
+        yolo_end_time = time.time()
+        annotated_frame = results[0].plot()
+        with lock:
+            output_frame = annotated_frame
+        frame_end_time = time.time()
+        print(f"[SERVER H264] Frame total time: {(frame_end_time - frame_start_time)*1000:.2f} ms, YOLO time: {(yolo_end_time - yolo_start_time)*1000:.2f} ms")
+    cap.release()
 
 def start_flask():
     app.run(host="0.0.0.0", port=5000, threaded=True)
@@ -77,4 +98,9 @@ def start_flask():
 if __name__ == "__main__":
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
-    asyncio.run(start_ws_server())
+    if MODE == "webp":
+        asyncio.run(websockets.serve(handle_ws, "0.0.0.0", 8000))
+    elif MODE == "h264":
+        udp_thread = threading.Thread(target=udp_h264_receiver, daemon=True)
+        udp_thread.start()
+        udp_thread.join()

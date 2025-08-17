@@ -99,7 +99,15 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     if MODE == "webp":
-        asyncio.run(websockets.serve(handle_ws, "0.0.0.0", 8000))
+        def start_websocket_server():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            server = websockets.serve(handle_ws, "0.0.0.0", 8000)
+            loop.run_until_complete(server)
+            loop.run_forever()
+        websocket_thread = threading.Thread(target=start_websocket_server, daemon=True)
+        websocket_thread.start()
+        websocket_thread.join()
     elif MODE == "h264":
         udp_thread = threading.Thread(target=udp_h264_receiver, daemon=True)
         udp_thread.start()

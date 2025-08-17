@@ -1,80 +1,64 @@
 import socket
 import cv2
 import struct
-import numpy as np
-import threading
 import time
+import threading
 
-SERVER_IP = '222.231.24.5'
-SERVER_PORT = 9999
+def recv_all(sock, length):
+    buf = bytearray(length)
+    view = memoryview(buf)
+    while length:
+        n = sock.recv_into(view, length)
+        if n == 0:
+            return None
+        view = view[n:]
+        length -= n
+    return bytes(buf)
 
-def send_video(video_path, window_name):
-    cap = cv2.VideoCapture(video_path)
+def client_worker(video_path, client_id, server_ip='[AWS_PUBLIC_IP]', port=9999):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((SERVER_IP, SERVER_PORT))
+    sock.connect((server_ip, port))
 
-    try:
-        while True:
-            start_total = time.time()
+    cap = cv2.VideoCapture(video_path)
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-            ret, frame = cap.read()
-            if not ret:
-                print(f"[INFO] End of {video_path}")
-                break
+        _, buffer = cv2.imencode('.jpg', frame)
+        data = buffer.tobytes()
 
-            # --- 전송 시작 시간 ---
-            start_send = time.time()
-            _, encoded = cv2.imencode('.jpg', frame)
-            data = encoded.tobytes()
-            sock.sendall(struct.pack(">I", len(data)) + data)
-            end_send = time.time()
+        # 전송
+        start = time.time()
+        sock.sendall(struct.pack('>I', len(data)) + data)
 
-            # --- 수신 시작 시간 ---
-            start_recv = time.time()
-            data_len = sock.recv(4)
-            if not data_len:
-                break
-            length = struct.unpack(">I", data_len)[0]
+        # 수신
+        raw_len = recv_all(sock, 4)
+        if not raw_len:
+            break
+        msg_len = struct.unpack('>I', raw_len)[0]
+        result_data = recv_all(sock, msg_len)
 
-            result = b""
-            while len(result) < length:
-                packet = sock.recv(length - len(result))
-                if not packet:
-                    return
-                result += packet
-            end_recv = time.time()
+        # 디코딩 및 출력
+        nparr = np.frombuffer(result_data, np.uint8)
+        result_frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-            # 디코딩 + 출력
-            img_array = np.frombuffer(result, dtype=np.uint8)
-            processed_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        elapsed = time.time() - start
+        print(f"[Client {client_id}] Total: {elapsed:.3f}s")
 
-            cv2.imshow(window_name, processed_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        cv2.imshow(f'Client {client_id}', result_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-            # --- 시간 측정 결과 출력 ---
-            total_time = time.time() - start_total
-            send_time = end_send - start_send
-            recv_time = end_recv - start_recv
-            print(f"[{window_name}] Total: {total_time:.3f}s | Send: {send_time:.3f}s | Recv: {recv_time:.3f}s")
-
-    except Exception as e:
-        print(f"[ERROR] {video_path}: {e}")
-    finally:
-        cap.release()
-        sock.close()
-        cv2.destroyWindow(window_name)
+    cap.release()
+    sock.close()
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    videos = [
-        ("101.mp4", "Client 1"),
-        ("102.mp4", "Client 2"),
-        # 더 추가 가능
-    ]
-
+    video_paths = ['video1.mp4', 'video2.mp4']  # 여기에 MP4 파일 경로들 입력
     threads = []
-    for path, name in videos:
-        t = threading.Thread(target=send_video, args=(path, name))
+    for i, path in enumerate(video_paths):
+        t = threading.Thread(target=client_worker, args=(path, i+1))
         t.start()
         threads.append(t)
 

@@ -3,55 +3,57 @@ import threading
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import time
 import struct
+import time
 
-model = YOLO("yolov8x.pt")
+model = YOLO('yolov8x.pt')
 
 def handle_client(conn, addr):
-    print(f"[INFO] Connected by {addr}")
+    print(f"[SERVER] Connected by {addr}")
     try:
         while True:
-            data_len = conn.recv(4)
-            if not data_len:
+            raw_msglen = recvall(conn, 4)
+            if not raw_msglen:
                 break
-            length = struct.unpack(">I", data_len)[0]
+            msglen = struct.unpack('>I', raw_msglen)[0]
+            frame_data = recvall(conn, msglen)
+            nparr = np.frombuffer(frame_data, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-            data = b""
-            while len(data) < length:
-                packet = conn.recv(length - len(data))
-                if not packet:
-                    return
-                data += packet
+            start = time.time()
+            results = model(frame, imgsz=640, verbose=False)
+            annotated_frame = results[0].plot()
+            print(f"[SERVER] YOLO Time: {time.time() - start:.3f}s")
 
-            img_array = np.frombuffer(data, dtype=np.uint8)
-            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-
-            # --- YOLO 처리 시간 측정 ---
-            start_yolo = time.time()
-            results = model(frame)[0]
-            annotated = results.plot()
-            yolo_time = time.time() - start_yolo
-            print(f"[SERVER] YOLO Time: {yolo_time:.3f}s")
-
-            _, encoded = cv2.imencode('.jpg', annotated)
-            to_send = encoded.tobytes()
-            conn.sendall(struct.pack(">I", len(to_send)) + to_send)
+            _, img_encoded = cv2.imencode('.jpg', annotated_frame)
+            data = img_encoded.tobytes()
+            conn.sendall(struct.pack('>I', len(data)) + data)
 
     except Exception as e:
-        print(f"[ERROR] Client {addr} error: {e}")
+        print(f"[SERVER ERROR] {e}")
     finally:
         conn.close()
 
+def recvall(sock, length):
+    buf = bytearray(length)
+    view = memoryview(buf)
+    while length:
+        n = sock.recv_into(view, length)
+        if n == 0:
+            return None
+        view = view[n:]
+        length -= n
+    return bytes(buf)
+
 def start_server(host='0.0.0.0', port=9999):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(5)
-    print(f"[INFO] Server listening on {host}:{port}")
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((host, port))
+    server_socket.listen()
+    print(f"[SERVER] Listening on {host}:{port}")
 
     while True:
-        conn, addr = server.accept()
-        threading.Thread(target=handle_client, args=(conn, addr)).start()
+        conn, addr = server_socket.accept()
+        threading.Thread(target=handle_client, args=(conn, addr), daemon=True).start()
 
 if __name__ == "__main__":
     start_server()

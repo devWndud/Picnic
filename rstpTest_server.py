@@ -3,6 +3,7 @@ import threading
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import time
 import struct
 
 model = YOLO("yolov8x.pt")
@@ -11,13 +12,11 @@ def handle_client(conn, addr):
     print(f"[INFO] Connected by {addr}")
     try:
         while True:
-            # 먼저 데이터 길이 수신 (4바이트)
             data_len = conn.recv(4)
             if not data_len:
                 break
             length = struct.unpack(">I", data_len)[0]
 
-            # 본문 이미지 데이터 수신
             data = b""
             while len(data) < length:
                 packet = conn.recv(length - len(data))
@@ -25,15 +24,16 @@ def handle_client(conn, addr):
                     return
                 data += packet
 
-            # 디코딩
             img_array = np.frombuffer(data, dtype=np.uint8)
             frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
-            # YOLO 처리
+            # --- YOLO 처리 시간 측정 ---
+            start_yolo = time.time()
             results = model(frame)[0]
             annotated = results.plot()
+            yolo_time = time.time() - start_yolo
+            print(f"[SERVER] YOLO Time: {yolo_time:.3f}s")
 
-            # 다시 인코딩 후 전송
             _, encoded = cv2.imencode('.jpg', annotated)
             to_send = encoded.tobytes()
             conn.sendall(struct.pack(">I", len(to_send)) + to_send)

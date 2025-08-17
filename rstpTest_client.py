@@ -3,29 +3,34 @@ import cv2
 import struct
 import numpy as np
 import threading
+import time
 
 SERVER_IP = '222.231.24.5'
 SERVER_PORT = 9999
 
 def send_video(video_path, window_name):
     cap = cv2.VideoCapture(video_path)
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((SERVER_IP, SERVER_PORT))
 
     try:
         while True:
+            start_total = time.time()
+
             ret, frame = cap.read()
             if not ret:
                 print(f"[INFO] End of {video_path}")
                 break
 
-            # 인코딩 및 길이 전송
+            # --- 전송 시작 시간 ---
+            start_send = time.time()
             _, encoded = cv2.imencode('.jpg', frame)
             data = encoded.tobytes()
             sock.sendall(struct.pack(">I", len(data)) + data)
+            end_send = time.time()
 
-            # 처리된 프레임 수신
+            # --- 수신 시작 시간 ---
+            start_recv = time.time()
             data_len = sock.recv(4)
             if not data_len:
                 break
@@ -37,13 +42,21 @@ def send_video(video_path, window_name):
                 if not packet:
                     return
                 result += packet
+            end_recv = time.time()
 
+            # 디코딩 + 출력
             img_array = np.frombuffer(result, dtype=np.uint8)
             processed_frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
             cv2.imshow(window_name, processed_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
+
+            # --- 시간 측정 결과 출력 ---
+            total_time = time.time() - start_total
+            send_time = end_send - start_send
+            recv_time = end_recv - start_recv
+            print(f"[{window_name}] Total: {total_time:.3f}s | Send: {send_time:.3f}s | Recv: {recv_time:.3f}s")
 
     except Exception as e:
         print(f"[ERROR] {video_path}: {e}")
@@ -54,8 +67,8 @@ def send_video(video_path, window_name):
 
 if __name__ == "__main__":
     videos = [
-        ("video1.mp4", "Client 1"),
-        ("video2.mp4", "Client 2"),
+        ("101.mp4", "Client 1"),
+        ("102.mp4", "Client 2"),
         # 더 추가 가능
     ]
 

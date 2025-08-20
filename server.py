@@ -239,7 +239,7 @@ async def _handleClient(websocket):
             zoneCenter = None
             _abnormalDetected = any(det.get("label", "") == "bottle" for det in detections)
 
-            if _abnormalDetected:
+            if _abnormalDetected and False:
                 ttsMsg = "비정상 객체가 인식되었습니다"
             else:
                 for det in detections:

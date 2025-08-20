@@ -203,7 +203,7 @@ async def _handleClient(websocket):
                         "label": label,
                         "koreanLabel": korean_label
                     }
-                    if _isAbnormal(det, img.shape):
+                    if _isAbnormal(det, img.shape) and False:
                         if det["label"] == "bottle" and _isRecentBottle(det["box"]):
                             det["abnormal"] = False
 

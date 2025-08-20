@@ -61,7 +61,7 @@ async def receive_results(ws, send_times):
 async def main():
     if MODE == "webp":
         cap = cv2.VideoCapture(VIDEO_PATH)
-        async with websockets.connect(f'ws://{SERVER_IP}:8000') as ws:
+        async with websockets.connect(f'ws://{SERVER_IP}:5000/ws') as ws:
             send_times = {}
             send_task = asyncio.create_task(send_frames_webp(ws, cap, send_times))
             recv_task = asyncio.create_task(receive_results(ws, send_times))

@@ -100,7 +100,7 @@ async def _sendFrames(cam, cam_idx, total_cams):
 
     uniqueCode = 'A7X2bQ9cLmY1'
 
-    async with websockets.connect(f'ws://{ip}:8000') as ws:
+    async with websockets.connect(f'ws://{ip}:9900') as ws:
         while True:
             if not cam.ret or cam.frame is None:
                 await asyncio.sleep(0.01)

@@ -21,7 +21,7 @@ latestFrames = {}
 frameLock = threading.Lock()
 recentBottleBoxes = []
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='picnic_webapp-main', static_url_path='')
 
 def start_flask():
     app.run(host='0.0.0.0', port=8000, debug=False, use_reloader=False)
@@ -43,15 +43,37 @@ def video_feed(uniqueCode):
             with frameLock:
                 frame = latestFrames.get(uniqueCode)
                 if frame is None:
+                    # avoid busy spin when no frames yet
+                    time.sleep(0.1)
                     continue
                 ret, jpeg = cv2.imencode('.jpg', frame)
                 if not ret:
+                    time.sleep(0.05)
                     continue
                 frame_bytes = jpeg.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            if frame_bytes:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             time.sleep(0.05)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.get('/latest/<uniqueCode>.jpg')
+def latest_jpg(uniqueCode):
+    with frameLock:
+        frame = latestFrames.get(uniqueCode)
+        if frame is None:
+            # 404 if no frame available yet
+            return ("", 404)
+        ret, jpeg = cv2.imencode('.jpg', frame)
+        if not ret:
+            return ("", 500)
+        return Response(jpeg.tobytes(), mimetype='image/jpeg')
+
+# Serve the frontend over HTTP to avoid file:// CORS issues
+@app.route('/')
+def serve_main():
+    from flask import send_from_directory
+    return send_from_directory('picnic_webapp-main', 'main.html')
 def _isAbnormal(det, img_shape):
     return det["label"] == "bottle"
 

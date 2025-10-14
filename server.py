@@ -40,16 +40,17 @@ def updateLatestFrame(img, uniqueCode):
 def video_feed(uniqueCode):
     def generate():
         while True:
+            # safely snapshot without holding lock during sleep/encode
             with frameLock:
                 frame = latestFrames.get(uniqueCode)
-                if frame is None:
-                    # avoid busy spin when no frames yet
-                    time.sleep(0.1)
-                    continue
-                ret, jpeg = cv2.imencode('.jpg', frame)
-                if not ret:
-                    time.sleep(0.05)
-                    continue
+                frame_copy = None if frame is None else frame.copy()
+            if frame_copy is None:
+                time.sleep(0.1)
+                continue
+            ret, jpeg = cv2.imencode('.jpg', frame_copy)
+            if not ret:
+                time.sleep(0.05)
+                continue
                 frame_bytes = jpeg.tobytes()
             if frame_bytes:
                 yield (b'--frame\r\n'

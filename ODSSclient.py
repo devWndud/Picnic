@@ -1,4 +1,3 @@
-
 import websockets
 import asyncio
 import json
@@ -51,7 +50,8 @@ class CameraThread(threading.Thread):
     def __init__(self, device_path):
         super().__init__()
         self.device_path = device_path
-        self.cap = cv2.VideoCapture(self.device_path)
+        # DirectShow 사용 (Windows)
+        self.cap = cv2.VideoCapture(self.device_path, cv2.CAP_DSHOW)
         self.ret = False
         self.frame = None
         self.running = True
@@ -75,13 +75,14 @@ class CameraThread(threading.Thread):
         if self.cap.isOpened():
             self.cap.release()
 
-def _findVideoDevices():
-    devices = []
-    for i in range(10):
-        path = f"/dev/video{i}"
-        if os.path.exists(path):
-            devices.append(path)
-    return devices
+def _findSingleCameraDevice():
+    # 카메라 인덱스 탐색 (Windows용)
+    for i in range(5):
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            cap.release()
+            return i
+    return 0
 
 def _getDirection(idx, total):
     directionMap = ["Front", "Left", "Right"]
@@ -147,16 +148,6 @@ async def _sendFrames(cam, cam_idx, total_cams):
                 break
     cv2.destroyWindow(windowName)
 
-def _findSingleCameraDevice():
-    cap = cv2.VideoCapture(0)
-    if cap.isOpened():
-        cap.release()
-        return 0
-    for i in range(10):
-        path = f"/dev/video{i}"
-        if os.path.exists(path):
-            return path
-    return 0
 async def main():
     device = _findSingleCameraDevice()
     print("사용 카메라:", device)
@@ -166,6 +157,9 @@ async def main():
         print("카메라 없음")
         return
     cam.start()
+
+    # WebSocket 전송 (테스트용으로 단일 카메라만)
+    await _sendFrames(cam, 0, 1)
 
     cam.stop()
     cam.join()

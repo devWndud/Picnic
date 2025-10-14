@@ -1,4 +1,3 @@
-
 import asyncio
 import websockets
 import threading
@@ -20,7 +19,6 @@ model = YOLO('yolov8x.pt')
 
 latestFrames = {}
 frameLock = threading.Lock()
-
 recentBottleBoxes = []
 
 app = Flask(__name__)
@@ -28,7 +26,7 @@ app = Flask(__name__)
 def start_flask():
     app.run(host='0.0.0.0', port=8000, debug=False, use_reloader=False)
 
-OPENAI_API_KEY = "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"  # 여기에 본인 토큰만 입력하면 됨
+OPENAI_API_KEY = "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"  
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 gpt_lock = threading.Lock()
@@ -54,7 +52,6 @@ def video_feed(uniqueCode):
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             time.sleep(0.05)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
 def _isAbnormal(det, img_shape):
     return det["label"] == "bottle"
 
@@ -281,8 +278,8 @@ async def _handleClient(websocket):
         pass
 
 async def start_websocket_server():
-    async with websockets.serve(_handleClient, "0.0.0.0", 8000):
-        print("WebSocket server started on ws://0.0.0.0:8000")
+    async with websockets.serve(_handleClient, "0.0.0.0", 9900):
+        print("WebSocket server started on ws://0.0.0.0:9900")
         await asyncio.Future()
 
 def main():

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#000000" />
+  <link id="themeStylesheet" rel="stylesheet" href="css/main1.css" />
+  <title>Main | Smart Vision</title>
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1 class="brand-name">Smart<span>vision</span></h1>
+      <div class="button-container">
+        <button id="themeToggle" class="login-button">🌙</button>
+        <a href="index.html" id="authBtn" class="login-button">Logout</a>
+      </div>
+    </header>
+
+    <main class="video-section">
+      <div class="video-frame-glass">
+        <img id="videoFrame" src="http://222.231.24.5:5000/video_feed/A7X2bQ9cLmY1" alt="Live Frame" />
+      </div>
+    </main>
+    
+    <footer class="app-footer">
+      <p>© 2025 Smart Vision. All rights reserved.</p>
+    </footer>
+  </div>
+
+  <script type="module" src="js/firebase-config.js"></script>
+  <script type="module" src="js/firebase-init.js"></script>
+  <script type="module" src="js/app.js"></script>
+
+  <script>
+    const themeBtn = document.getElementById('themeToggle');
+    const themeLink = document.getElementById('themeStylesheet');
+
+    themeBtn.addEventListener('click', () => {
+      const isLight = themeLink.getAttribute('href') === 'css/main1.css';
+      themeLink.setAttribute('href', isLight ? 'css/main.css' : 'css/main1.css');
+      themeBtn.textContent = isLight ? '☀️' : '🌙';
+    });
+  </script>
+</body>
+</html>

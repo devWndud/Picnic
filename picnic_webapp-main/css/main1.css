@@ -1,0 +1,191 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+:root {
+  --white: #ffffff;
+  --black: #0e0e0e;
+  --gray-light: #e0e0e0;
+  --gray-dark: #f4f4f4;
+  --blue-light: #e7f0fa;         /* 더 연한 하늘색 */
+  --blue-dark: #336699;          /* 기존 #003366보다 덜 진한 블루 */
+  --accent: #33669920;           /* 연하게 맞춰서 수정 */
+  --radius: 20px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--white);
+  color: var(--blue-dark);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 1024px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  padding: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand-name {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: var(--blue-dark);
+}
+
+.brand-name span {
+  color: #777;
+  font-weight: 400;
+}
+
+.logout-button {
+  background-color: transparent;
+  border: 1px solid var(--blue-dark);
+  color: var(--blue-dark);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.logout-button:hover {
+  background-color: var(--blue-dark);
+  color: var(--white);
+}
+
+.login-button {
+  display: inline-block;
+  text-decoration: none;
+  background-color: transparent;
+  border: 1px solid var(--blue-dark);
+  color: var(--blue-dark);
+  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.login-button:hover {
+  background-color: var(--blue-dark);
+  color: var(--white);
+}
+
+.video-section {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.video-frame-glass {
+  width: 90%;
+  max-width: 800px;
+  aspect-ratio: 16 / 9;
+  background: var(--blue-light);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(51, 102, 153, 0.05);
+  position: relative;
+}
+
+.video-frame-glass img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(5%);
+}
+
+.app-footer {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.8rem;
+  color: #777;
+}
+
+.auth-container {
+  max-width: 400px;
+  margin: 6rem auto;
+  padding: 3rem;
+  background-color: var(--blue-light);
+  border-radius: var(--radius);
+  box-shadow: 0 0 40px rgba(51, 102, 153, 0.05);
+  text-align: center;
+}
+
+.auth-container h1 {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  color: var(--blue-dark);
+}
+
+.auth-container form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.auth-container input,
+.auth-container select {
+  padding: 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid #ccc;
+  background-color: var(--white);
+  color: var(--blue-dark);
+  font-size: 0.95rem;
+}
+
+.auth-container button {
+  padding: 0.9rem;
+  background-color: var(--blue-dark);
+  color: var(--white);
+  font-weight: bold;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-container button:hover {
+  background-color: #285580; /* 살짝 어두운 hover 색 */
+}
+
+.auth-link {
+  margin-top: 1.5rem;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.auth-link a {
+  color: var(--blue-dark);
+  text-decoration: underline;
+}
+
+body, .app-container, .app-header, .video-section, .app-footer {
+    transition: background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease;
+  }
+.theme-button, .login-button {
+    transition: background-color 0.3s ease, color 0.3s ease, border 0.3s ease;
+  }
+#videoFrame {
+    transition: opacity 0.5s ease;
+  }
+    

@@ -76,7 +76,6 @@ class CameraThread(threading.Thread):
             self.cap.release()
 
 def _findSingleCameraDevice():
-    # 카메라 인덱스 탐색 (Windows용)
     for i in range(5):
         cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
         if cap.isOpened():
@@ -101,7 +100,7 @@ async def _sendFrames(cam, cam_idx, total_cams):
 
     uniqueCode = 'A7X2bQ9cLmY1'
 
-    async with websockets.connect(f'ws://{ip}:8000') as ws:
+    async with websockets.connect(f'ws://{ip}:9900') as ws:
         while True:
             if not cam.ret or cam.frame is None:
                 await asyncio.sleep(0.01)
@@ -134,7 +133,7 @@ async def _sendFrames(cam, cam_idx, total_cams):
                     label = det["kor_label"] if "kor_label" in det else det["label"]
 
                     if label not in DANGER_LABELS:
-                        continue  # 바닥, 벽 등은 무시
+                        continue
                     x1, y1, x2, y2 = det["box"]
 
                     conf = det["confidence"]
@@ -158,7 +157,6 @@ async def main():
         return
     cam.start()
 
-    # WebSocket 전송 (테스트용으로 단일 카메라만)
     await _sendFrames(cam, 0, 1)
 
     cam.stop()
@@ -166,5 +164,5 @@ async def main():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    _startTtsWorker()
+    # _startTtsWorker()
     asyncio.run(main())

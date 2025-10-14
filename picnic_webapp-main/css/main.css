@@ -1,0 +1,195 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+:root {
+  --black: #0e0e0e;
+  --white: #ffffff;
+  --gray-light: #d4d4d4;
+  --gray-dark: #1e1e1e;
+  --accent: #ffffff20;
+  --radius: 20px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--black);
+  color: var(--white);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.app-container {
+  width: 100%;
+  max-width: 1024px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  padding: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand-name {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+
+.brand-name span {
+  color: var(--gray-light);
+  font-weight: 400;
+}
+
+.logout-button {
+  background-color: transparent;
+  border: 1px solid var(--gray-light);
+  color: var(--white);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.logout-button:hover {
+  background-color: var(--gray-dark);
+}
+
+.login-button {
+  display: inline-block;
+  text-decoration: none;
+  background-color: transparent;
+  border: 1px solid #ffffff55;
+  color: white;
+  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.login-button:hover {
+  background-color: white;
+  color: black;
+}
+
+.video-section {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.video-frame-glass {
+  width: 90%;
+  max-width: 800px;
+  aspect-ratio: 16 / 9;
+  background: var(--gray-dark);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(255, 255, 255, 0.05);
+  position: relative;
+}
+
+.video-frame-glass img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(10%);
+}
+
+.app-footer {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.8rem;
+  color: var(--gray-light);
+}
+
+.auth-container {
+  max-width: 400px;
+  margin: 6rem auto;
+  padding: 3rem;
+  background-color: #1a1a1a;
+  border-radius: var(--radius);
+  box-shadow: 0 0 40px rgba(255, 255, 255, 0.05);
+  text-align: center;
+}
+
+.auth-container h1 {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  color: var(--white);
+}
+
+.auth-container form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.auth-container input {
+  padding: 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--gray-light);
+  background-color: #111;
+  color: var(--white);
+  font-size: 0.95rem;
+}
+
+.auth-container button {
+  padding: 0.9rem;
+  background-color: var(--white);
+  color: var(--black);
+  font-weight: bold;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.auth-container button:hover {
+  background-color: var(--gray-light);
+}
+
+.auth-link {
+  margin-top: 1.5rem;
+  color: var(--gray-light);
+  font-size: 0.85rem;
+}
+
+.auth-link a {
+  color: var(--white);
+  text-decoration: underline;
+}
+
+.auth-container select {
+  padding: 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--gray-light);
+  background-color: #111;
+  color: var(--white);
+  font-size: 0.95rem;
+}
+
+body, .app-container, .app-header, .video-section, .app-footer {
+  transition: background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease;
+}
+.theme-button, .login-button {
+  transition: background-color 0.3s ease, color 0.3s ease, border 0.3s ease;
+}
+#videoFrame {
+  transition: opacity 0.5s ease;
+}
+  

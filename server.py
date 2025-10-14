@@ -52,7 +52,7 @@ def video_feed(uniqueCode):
             if not ret:
                 time.sleep(0.05)
                 continue
-                frame_bytes = jpeg.tobytes()
+            frame_bytes = jpeg.tobytes()
             if frame_bytes:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')

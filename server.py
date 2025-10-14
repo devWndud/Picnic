@@ -38,6 +38,7 @@ def updateLatestFrame(img, uniqueCode):
 
 @app.route('/video_feed/<uniqueCode>')
 def video_feed(uniqueCode):
+    print(f"[HTTP] /video_feed requested: {uniqueCode}", flush=True)
     def generate():
         while True:
             # safely snapshot without holding lock during sleep/encode
@@ -60,6 +61,7 @@ def video_feed(uniqueCode):
 
 @app.get('/latest/<uniqueCode>.jpg')
 def latest_jpg(uniqueCode):
+    print(f"[HTTP] /latest requested: {uniqueCode}", flush=True)
     with frameLock:
         frame = latestFrames.get(uniqueCode)
         if frame is None:
@@ -69,6 +71,17 @@ def latest_jpg(uniqueCode):
         if not ret:
             return ("", 500)
         return Response(jpeg.tobytes(), mimetype='image/jpeg')
+
+@app.get('/ping')
+def ping():
+    print("[HTTP] /ping", flush=True)
+    return {"ok": True}
+
+@app.get('/debug/status')
+def debug_status():
+    with frameLock:
+        keys = list(latestFrames.keys())
+    return {"uniqueCodes": keys, "count": len(keys)}
 
 # Serve the frontend over HTTP to avoid file:// CORS issues
 @app.route('/')
